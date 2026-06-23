@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { EXIT, runCli, type WriterSink } from "@facet/cli";
 import { buildContext, type Context, Registry } from "@facet/core";
+import logsBoom from "../../../examples/logs/capabilities/logs.boom.cap";
 import logsFollow from "../../../examples/logs/capabilities/logs.follow.cap";
 import logsTail from "../../../examples/logs/capabilities/logs.tail.cap";
 import { store } from "../../../examples/logs/store";
@@ -15,10 +16,10 @@ import { store } from "../../../examples/logs/store";
  * validation); the surface only chooses the rendering.
  */
 
-/** A registry with the streaming `logs.follow` plus its unary sibling `logs.tail`. */
+/** A registry with the streaming `logs.follow`, its unary sibling `logs.tail`, and the mid-stream fixture. */
 function registry(): Registry {
   const r = new Registry();
-  for (const def of [logsFollow, logsTail]) r.register(def);
+  for (const def of [logsFollow, logsTail, logsBoom]) r.register(def);
   return r;
 }
 
@@ -93,5 +94,36 @@ describe("the CLI streams a capability — one JSON line per chunk, then the fin
       source: "build",
       lines: ["build started", "compiling", "build ok"],
     });
+  });
+});
+
+/**
+ * MID-STREAM FAILURE on the CLI (see `docs/STREAMING-CONTRACT.md`). The K chunk lines already printed to stdout
+ * stay; on the throw the CLI prints `✗ <code>: <message>` to stderr and exits 1 — and prints NO final result
+ * line. This is exactly the pre-stream refusal rendering (`✗` + exit 1), only preceded by the chunks that did
+ * make it out. Both triggers — a handler throw and a bad chunk — render identically (only the code differs).
+ */
+describe("mid-stream failure on the CLI: chunk lines on stdout, then ✗ on stderr + exit 1, no final line", () => {
+  const TWO_CHUNKS = [
+    { line: "boom started", n: 1 },
+    { line: "still fine", n: 2 },
+  ];
+
+  test("a handler throw: two chunk lines on stdout, then ✗ <code> on stderr, exit 1, no final line", async () => {
+    const { code, out, err } = await run(["logs.boom", "--json", '{"mode":"throw"}']);
+    expect(code).toBe(EXIT.error);
+    // The two chunk lines were printed as they arrived — and nothing else (no final result line).
+    expect(out).toHaveLength(2);
+    expect(out.map((l) => JSON.parse(l))).toEqual(TWO_CHUNKS);
+    // The throw is rendered as the CLI's native error: the typed code on stderr.
+    expect(err.join("\n")).toContain("✗ connector_unavailable");
+  });
+
+  test("a bad chunk: two chunk lines on stdout, then ✗ internal on stderr, exit 1, no final line", async () => {
+    const { code, out, err } = await run(["logs.boom", "--json", '{"mode":"bad-chunk"}']);
+    expect(code).toBe(EXIT.error);
+    expect(out).toHaveLength(2);
+    expect(out.map((l) => JSON.parse(l))).toEqual(TWO_CHUNKS);
+    expect(err.join("\n")).toContain("✗ internal");
   });
 });

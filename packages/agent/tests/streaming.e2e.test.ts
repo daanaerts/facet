@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { ContextParts } from "@facet/agent";
 import { streamToolCall } from "@facet/agent";
-import { Registry } from "@facet/core";
+import { FacetError, Registry } from "@facet/core";
+import type { AuthParts } from "@facet/surface-kit";
+import logsBoom from "../../../examples/logs/capabilities/logs.boom.cap";
 import logsFollow from "../../../examples/logs/capabilities/logs.follow.cap";
 import logsTail from "../../../examples/logs/capabilities/logs.tail.cap";
 import { store } from "../../../examples/logs/store";
@@ -16,16 +17,16 @@ import { store } from "../../../examples/logs/store";
  * per-chunk/final validation — with nothing re-implemented here.
  */
 
-/** A registry with the streaming `logs.follow` plus its unary sibling `logs.tail`. */
+/** A registry with the streaming `logs.follow`, its unary sibling `logs.tail`, and the mid-stream fixture. */
 function registry(): Registry {
   const r = new Registry();
-  for (const def of [logsFollow, logsTail]) r.register(def);
+  for (const def of [logsFollow, logsTail, logsBoom]) r.register(def);
   return r;
 }
 
 /** The host's per-call Context seam — the demo agent, granted logs:read (all a stream is a read needs). */
-function contextFor(scopes = ["logs:read"]): (id: string) => ContextParts {
-  return (_id: string): ContextParts => ({ actor: { kind: "agent", agentId: "copilot" }, scopes });
+function contextFor(scopes = ["logs:read"]): (id: string) => AuthParts {
+  return (_id: string): AuthParts => ({ actor: { kind: "agent", agentId: "copilot" }, scopes });
 }
 
 /** Drive a stream to completion, collecting its chunks and capturing the returned final. */
@@ -97,5 +98,57 @@ describe("the agent surface streams a capability — chunks then the final, no L
       { contextFor: contextFor() },
     );
     await expect(gen.next()).rejects.toMatchObject({ code: "validation" });
+  });
+});
+
+/**
+ * MID-STREAM FAILURE on the agent surface — the REFERENCE rendering the other three surfaces must match (see
+ * `docs/STREAMING-CONTRACT.md`). The driver consumes the generator with a `for await`; it sees the K validated
+ * chunks, then the loop THROWS the FacetError. Nothing is translated to an `{ errorCode }` here — a streaming
+ * failure surfaces as the thrown typed error, exactly as the core raises it.
+ */
+describe("mid-stream failure on the agent surface: chunks delivered, THEN the generator throws", () => {
+  const TWO_CHUNKS = [
+    { line: "boom started", n: 1 },
+    { line: "still fine", n: 2 },
+  ];
+
+  /** Consume a stream expected to fail: gather chunks, capture the throw (fail the test if it does not throw). */
+  async function drive(
+    gen: AsyncGenerator<unknown, unknown, void>,
+  ): Promise<{ chunks: unknown[]; error: unknown }> {
+    const chunks: unknown[] = [];
+    try {
+      for await (const chunk of gen) chunks.push(chunk);
+    } catch (error) {
+      return { chunks, error };
+    }
+    throw new Error("expected the agent stream to throw mid-iteration");
+  }
+
+  test("a handler throw: the two chunks arrive, then the generator throws the typed FacetError", async () => {
+    const { chunks, error } = await drive(
+      streamToolCall(
+        registry(),
+        { name: "logs.boom", arguments: { mode: "throw" } },
+        { contextFor: contextFor() },
+      ),
+    );
+    expect(chunks).toEqual(TWO_CHUNKS);
+    expect(error).toBeInstanceOf(FacetError);
+    expect(error).toMatchObject({ code: "connector_unavailable" });
+  });
+
+  test("a bad chunk: the two valid chunks arrive, then the generator throws internal", async () => {
+    const { chunks, error } = await drive(
+      streamToolCall(
+        registry(),
+        { name: "logs.boom", arguments: { mode: "bad-chunk" } },
+        { contextFor: contextFor() },
+      ),
+    );
+    expect(chunks).toEqual(TWO_CHUNKS);
+    expect(error).toBeInstanceOf(FacetError);
+    expect(error).toMatchObject({ code: "internal" });
   });
 });

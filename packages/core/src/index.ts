@@ -20,7 +20,17 @@ export {
 } from "./errors";
 export { execute } from "./execute";
 export { executeStream } from "./execute-stream";
-export { type JsonSchema, toJsonSchema } from "./json-schema";
 export type { Ledger } from "./ledger";
 export { Registry } from "./registry";
+export {
+  getSchemaAdapter,
+  type JsonSchema,
+  type SchemaAdapter,
+  type SchemaIO,
+  setSchemaAdapter,
+  toJsonSchema,
+  zodSchemaAdapter,
+} from "./schema-adapter";
+export type { StandardSchemaV1 } from "./standard-schema";
+export { validateStandard } from "./standard-schema";
 export { SURFACES, type SurfaceKind } from "./surface";

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import type { ContextParts } from "@facet/agent";
 import { agentToolset, dispatchToolCall, simulateAgentRun } from "@facet/agent";
 import { Registry } from "@facet/core";
+import type { AuthParts } from "@facet/surface-kit";
 import jobsCancel from "../../../examples/logs/capabilities/jobs.cancel.cap";
 import jobsList from "../../../examples/logs/capabilities/jobs.list.cap";
 import jobsStart from "../../../examples/logs/capabilities/jobs.start.cap";
@@ -32,8 +32,8 @@ function registry(): Registry {
  * with one shared in-memory ledger so a retried write actually dedupes. A real host would vary this by
  * verified identity; the surface does not change. (No tenant/install/db — this is the spine-free seam.)
  */
-function contextFor(ledger = new MemoryLedger()): (id: string) => ContextParts {
-  return (_id: string): ContextParts => ({
+function contextFor(ledger = new MemoryLedger()): (id: string) => AuthParts {
+  return (_id: string): AuthParts => ({
     actor: { kind: "agent", agentId: "copilot" },
     scopes: ["logs:read", "jobs:read", "jobs:write"],
     ledger,

@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { ConfirmationRequiredError, execute, Registry, ScopeError } from "@facet/core";
+import {
+  ConfirmationRequiredError,
+  defineCapability,
+  execute,
+  Registry,
+  ScopeError,
+} from "@facet/core";
+import { z } from "zod";
 import jobsCancel from "../examples/logs/capabilities/jobs.cancel.cap";
 import jobsList from "../examples/logs/capabilities/jobs.list.cap";
 import jobsStart from "../examples/logs/capabilities/jobs.start.cap";
@@ -112,5 +119,76 @@ describe("the carved core stands alone — no tenant, no installs, no db", () =>
     reg.register({ ...jobsList, enabled: false });
     const run = execute(reg, "jobs.list", {}, makeContext({ scopes: ["jobs:read"] }));
     await expect(run).rejects.toMatchObject({ code: "kill_switch" });
+  });
+});
+
+/**
+ * THE ATOMIC-LEDGER PROOF — the open correctness note made into a test.
+ *
+ * The old ledger did `lookup → handler → record` non-atomically, so two same-key writes racing through
+ * `execute()` could BOTH miss the lookup and BOTH run the handler. The reshaped port `claim`s the key
+ * atomically FIRST, so exactly one caller wins and runs the handler; the loser never does. These tests fire
+ * genuinely-concurrent same-key writes (the instrumented handler `await`s, so control yields between
+ * `claim` and `commit` — the exact window the old shape leaked through) and assert the handler ran ONCE.
+ */
+describe("atomic idempotency ledger — concurrent same-key writes run the handler exactly once", () => {
+  /** A write whose handler counts its own invocations and yields control, so a race is real, not theoretical. */
+  function countingRegistry(): { reg: Registry; runs: () => number } {
+    let count = 0;
+    const cap = defineCapability({
+      id: "side.effect",
+      summary: "A write that records how many times its handler actually ran.",
+      input: z.object({ tag: z.string() }),
+      output: z.object({ tag: z.string(), runs: z.number() }),
+      scopes: ["side:write"],
+      risk: "write",
+      idempotent: true,
+      handler: async (input) => {
+        // Yield BEFORE the side effect: under the old lookup→record shape both racers would be parked here
+        // having each missed the lookup, then both resume and both increment. The atomic claim prevents it.
+        await Promise.resolve();
+        count += 1;
+        return { tag: input.tag, runs: count };
+      },
+    });
+    const reg = new Registry();
+    reg.register(cap);
+    return { reg, runs: () => count };
+  }
+
+  test("two concurrent same-key writes invoke the handler exactly once", async () => {
+    const { reg, runs } = countingRegistry();
+    const ledger = new MemoryLedger();
+    const ctx = () =>
+      makeContext({ scopes: ["side:write"], confirm: true, idempotencyKey: "dup", ledger });
+
+    // Fire both writes before awaiting either — both reach the atomic `claim`; exactly one wins.
+    const settled = await Promise.allSettled([
+      execute(reg, "side.effect", { tag: "a" }, ctx()),
+      execute(reg, "side.effect", { tag: "b" }, ctx()),
+    ]);
+
+    expect(runs()).toBe(1); // the whole point: the handler ran exactly once across both concurrent calls.
+
+    // One call won and produced the result; the other lost the claim. Because the winner is still mid-flight
+    // when the loser reads (nothing committed yet), the loser surfaces `conflict` rather than a stale value.
+    const fulfilled = settled.filter((s) => s.status === "fulfilled");
+    const rejected = settled.filter((s) => s.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({ code: "conflict" });
+  });
+
+  test("after the winner commits, a later same-key retry replays the stored result (never re-runs)", async () => {
+    const { reg, runs } = countingRegistry();
+    const ledger = new MemoryLedger();
+    const ctx = () =>
+      makeContext({ scopes: ["side:write"], confirm: true, idempotencyKey: "dup", ledger });
+
+    const first = await execute(reg, "side.effect", { tag: "a" }, ctx());
+    const replay = await execute(reg, "side.effect", { tag: "b" }, ctx()); // same key, after commit
+
+    expect(replay).toEqual(first); // the loser got the winner's committed result…
+    expect(runs()).toBe(1); // …and the handler still ran exactly once.
   });
 });

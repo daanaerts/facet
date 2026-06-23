@@ -1,9 +1,7 @@
-import type { ContextParts } from "@facet/agent";
-import type { CliContextSeam } from "@facet/cli";
-import type { Actor, Context, Ledger } from "@facet/core";
-import { buildContext } from "@facet/core";
-import type { AuthResult, Headers } from "@facet/http";
+import type { Actor, Ledger } from "@facet/core";
+import type { Headers } from "@facet/http";
 import type { ToolContext } from "@facet/mcp";
+import type { AuthParts } from "@facet/surface-kit";
 
 /**
  * The host seam — the to-do app's ENTIRE contribution to the framework. Every surface needs the same two
@@ -33,18 +31,29 @@ export const DEV_ACTOR: Actor = { kind: "agent", agentId: "todo-demo" };
  * carrying the same key replays the first result instead of inserting a second todo. Keyed by
  * `(capabilityId, key)`; no tenant, no db. A real host swaps this for Redis / a table without touching a
  * capability or a surface.
+ *
+ * Atomic insert-once comes free from the single-threaded event loop: `claim` checks-and-sets with no `await`
+ * between the read and the write, so a concurrent second `claim` for the same key cannot interleave and
+ * always loses. A real adapter gets the same atomicity from a DB `UNIQUE(key, capability_id)` constraint or
+ * Redis `SET key val NX`. `#claimed` records who won the race; `#results` holds committed values for `read`.
  */
 export class MemoryLedger implements Ledger {
-  #store = new Map<string, unknown>();
+  #claimed = new Set<string>();
+  #results = new Map<string, unknown>();
   #key(key: string, capabilityId: string): string {
     return `${capabilityId}::${key}`;
   }
-  async lookup(key: string, capabilityId: string): Promise<unknown> {
-    return this.#store.get(this.#key(key, capabilityId));
-  }
-  async record(key: string, capabilityId: string, result: unknown): Promise<void> {
+  async claim(key: string, capabilityId: string): Promise<"won" | "lost"> {
     const k = this.#key(key, capabilityId);
-    if (!this.#store.has(k)) this.#store.set(k, result);
+    if (this.#claimed.has(k)) return "lost";
+    this.#claimed.add(k);
+    return "won";
+  }
+  async commit(key: string, capabilityId: string, result: unknown): Promise<void> {
+    this.#results.set(this.#key(key, capabilityId), result);
+  }
+  async read(key: string, capabilityId: string): Promise<unknown> {
+    return this.#results.get(this.#key(key, capabilityId));
   }
 }
 
@@ -55,9 +64,9 @@ export class MemoryLedger implements Ledger {
  * The ledger lives here, not per request. (An optional `x-facet-actor` override is deliberately NOT honoured
  * — a dev seam should not let a header assert identity.)
  */
-export function devAuthenticate(): (headers: Headers) => AuthResult {
+export function devAuthenticate(): (headers: Headers) => AuthParts {
   const ledger = new MemoryLedger();
-  return (_headers: Headers): AuthResult => ({
+  return (_headers: Headers): AuthParts => ({
     actor: DEV_ACTOR,
     scopes: DEV_SCOPES,
     ledger,
@@ -65,39 +74,24 @@ export function devAuthenticate(): (headers: Headers) => AuthResult {
 }
 
 /**
- * The CLI surface's seam: turn `runCli`'s request struct (actor + confirm + key, parsed off `--actor` /
- * `--yes` / `--key`) into a Context with the todo scopes granted and one shared ledger, so a retried
- * `todos.add` carrying the same `--key` dedupes. The ledger is created once (closed over), not per call.
+ * The CLI surface's seam — the shared {@link AuthParts}. `runCli` hands it the calling `actor` (from
+ * `--actor`); it returns the todo scopes + one shared ledger (so a retried `todos.add` carrying the same
+ * `--key` dedupes). The SURFACE builds the Context, adding `surface: "cli"` + the parsed `--yes` / `--key`.
  */
-export function devCliContextFor(): (seam: CliContextSeam) => Context {
+export function devCliContextFor(): (actor: Actor) => AuthParts {
   const ledger = new MemoryLedger();
-  return (seam: CliContextSeam): Context =>
-    buildContext({
-      actor: seam.actor,
-      scopes: DEV_SCOPES,
-      surface: seam.surface,
-      confirm: seam.confirm,
-      idempotencyKey: seam.idempotencyKey,
-      ledger,
-    });
+  return (actor: Actor): AuthParts => ({ actor, scopes: DEV_SCOPES, ledger });
 }
 
 /**
- * The MCP surface's seam: every tool call is the same trusted dev agent granted the todo scopes. The surface
- * reads `confirm` / `idempotencyKey` off the tool arguments and hands them here; the host folds them into a
- * Context via `buildContext` with `surface: "mcp"`. One shared ledger (closed over) dedupes a retried write.
+ * The MCP surface's seam — the shared {@link AuthParts}. Every tool call is the same trusted dev agent granted
+ * the todo scopes, with one shared ledger (closed over) so a retried write dedupes. The SURFACE reads
+ * `confirm` / `idempotencyKey` off the tool arguments and builds the Context (`surface: "mcp"`); the host
+ * returns only "who + what may they do". (`meta.id` is available if a host wants to vary scopes by capability.)
  */
-export function devMcpContextFor(): (meta: ToolContext) => Context {
+export function devMcpContextFor(): (meta: ToolContext) => AuthParts {
   const ledger = new MemoryLedger();
-  return ({ confirm, idempotencyKey }: ToolContext): Context =>
-    buildContext({
-      actor: DEV_ACTOR,
-      scopes: DEV_SCOPES,
-      surface: "mcp",
-      confirm,
-      idempotencyKey,
-      ledger,
-    });
+  return (_meta: ToolContext): AuthParts => ({ actor: DEV_ACTOR, scopes: DEV_SCOPES, ledger });
 }
 
 /**
@@ -106,9 +100,9 @@ export function devMcpContextFor(): (meta: ToolContext) => Context {
  * arguments; the host returns only the spine-free parts. One shared ledger (closed over) dedupes a retry. The
  * `id` is handed in case a host varies scopes by capability — this demo ignores it and grants a fixed set.
  */
-export function devAgentContextFor(): (id: string) => ContextParts {
+export function devAgentContextFor(): (id: string) => AuthParts {
   const ledger = new MemoryLedger();
-  return (_id: string): ContextParts => ({
+  return (_id: string): AuthParts => ({
     actor: DEV_ACTOR,
     scopes: DEV_SCOPES,
     ledger,

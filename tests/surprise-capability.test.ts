@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { agentToolset, dispatchToolCall } from "@facet/agent";
 import { runCli, type WriterSink } from "@facet/cli";
-import { buildContext, defineCapability, Registry } from "@facet/core";
+import { defineCapability, Registry } from "@facet/core";
 import { createHttpApp } from "@facet/http";
 import { createMcpServer, mcpTools, toolName } from "@facet/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -84,16 +84,7 @@ async function viaCli(
   const code = await runCli(
     registry(),
     argv,
-    {
-      contextFor: (seam) =>
-        buildContext({
-          actor: seam.actor,
-          scopes: SCOPES,
-          surface: "cli",
-          confirm: seam.confirm,
-          idempotencyKey: seam.idempotencyKey,
-        }),
-    },
+    { contextFor: (actor) => ({ actor, scopes: SCOPES }) },
     sink,
   );
   if (code !== 0) {
@@ -124,14 +115,7 @@ async function viaMcp(
   confirm = false,
 ): Promise<Result> {
   const server = createMcpServer(registry(), {
-    contextFor: (meta) =>
-      buildContext({
-        actor: ACTOR,
-        scopes: SCOPES,
-        surface: "mcp",
-        confirm: meta.confirm,
-        idempotencyKey: meta.idempotencyKey,
-      }),
+    contextFor: () => ({ actor: ACTOR, scopes: SCOPES }),
   });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "surprise", version: "0.0.0" });

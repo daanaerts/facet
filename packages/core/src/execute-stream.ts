@@ -1,6 +1,7 @@
 import type { Context } from "./context";
 import { FacetError, KillSwitchError, NotFoundError, ValidationError } from "./errors";
 import type { Registry } from "./registry";
+import { validateStandard } from "./standard-schema";
 
 /**
  * The streaming sibling of `execute()` — the SAME chokepoint, expressed as an async generator. Streaming is
@@ -22,6 +23,14 @@ import type { Registry } from "./registry";
  * so the confirmation gate and the idempotency/ledger steps of the unary pipeline DO NOT APPLY here and are
  * deliberately absent — a read neither confirms nor records. This keeps the streaming path a strict, smaller
  * projection of the same invariants rather than a second, divergent engine.
+ *
+ * MID-STREAM FAILURE CONTRACT (see `docs/STREAMING-CONTRACT.md`): once chunk 1 is out the read gates have all
+ * passed, so any later failure is a TRUE mid-stream error — a chunk that fails its `chunk` schema, or the
+ * handler throwing part-way through. The canonical behavior, which every surface renders, is: yield the K good
+ * chunks, then THROW a `FacetError` (NEVER a silent truncation, never a "clean" early return). Step 5 below
+ * guarantees the thrown thing is always a `FacetError`: a chunk-validation failure throws one directly, and a
+ * handler throw is normalized — a `FacetError` passes through unchanged, a non-`FacetError` is wrapped as
+ * `internal` (the exact mapping every surface already applies to a non-`FacetError` on the unary path).
  */
 export async function* executeStream<C = unknown, F = unknown>(
   registry: Registry,
@@ -38,9 +47,10 @@ export async function* executeStream<C = unknown, F = unknown>(
     throw new FacetError("validation", `capability ${id} is not streaming`, 422, { id });
   }
 
-  // 2. validate input against the capability's own schema — the surface never validates.
-  const parsed = def.input.safeParse(rawInput);
-  if (!parsed.success) throw new ValidationError(id, parsed.error.issues);
+  // 2. validate input against the capability's own schema — the surface never validates. Same Standard Schema
+  //    contract as the unary path: a `.issues` result becomes the identical `validation` ValidationError.
+  const parsed = await validateStandard(def.input, rawInput);
+  if (parsed.issues) throw new ValidationError(id, parsed.issues);
 
   // 3. authz — declared scopes enforced BEFORE any chunk is produced (a missing scope is refused here, so
   //    no partial stream ever leaks past an authz failure).
@@ -50,28 +60,45 @@ export async function* executeStream<C = unknown, F = unknown>(
   ctx.audit("capability.invoke", { id, risk: def.risk, surface: ctx.surface, stream: true });
 
   // 5. run + validate. Drive the generator; validate every chunk on the way out, then validate the final.
-  const gen = def.streamHandler(parsed.data, ctx);
-  let step = await gen.next();
-  while (!step.done) {
-    const checked = def.chunk.safeParse(step.value);
-    if (!checked.success) {
-      throw new FacetError("internal", `capability ${id} produced an invalid chunk`, 500, {
+  //    `advance` normalizes a handler throw so the mid-stream contract holds: a `FacetError` the handler threw
+  //    propagates unchanged (it keeps its own code), while any other thrown value becomes `internal` — so a
+  //    surface downstream renders exactly ONE error vocabulary whether the failure was the engine's (a bad
+  //    chunk) or the handler's. This is the streaming twin of how the unary surfaces map a non-`FacetError`.
+  const gen = def.streamHandler(parsed.value, ctx);
+  const advance = async (): Promise<IteratorResult<unknown, unknown>> => {
+    try {
+      return await gen.next();
+    } catch (err) {
+      if (err instanceof FacetError) throw err;
+      throw new FacetError("internal", `capability ${id} failed mid-stream`, 500, {
         id,
-        issues: checked.error.issues,
+        cause: err instanceof Error ? err.message : String(err),
       });
     }
-    yield checked.data as C;
-    step = await gen.next();
+  };
+
+  let step = await advance();
+  while (!step.done) {
+    const checked = await validateStandard(def.chunk, step.value);
+    if (checked.issues) {
+      // A chunk that fails its schema — thrown AFTER the chunks already yielded, never a silent drop.
+      throw new FacetError("internal", `capability ${id} produced an invalid chunk`, 500, {
+        id,
+        issues: checked.issues,
+      });
+    }
+    yield checked.value as C;
+    step = await advance();
   }
 
-  const finalChecked = def.output.safeParse(step.value);
-  if (!finalChecked.success) {
+  const finalChecked = await validateStandard(def.output, step.value);
+  if (finalChecked.issues) {
     throw new FacetError("internal", `capability ${id} produced invalid output`, 500, {
       id,
-      issues: finalChecked.error.issues,
+      issues: finalChecked.issues,
     });
   }
-  return finalChecked.data as F;
+  return finalChecked.value as F;
 }
 
 /**

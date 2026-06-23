@@ -7,11 +7,4 @@
  * It shares nothing with the other surfaces but `@facet/core`. See {@link runCli}.
  */
 export { flagString, type ParsedArgs, parseArgs } from "./args";
-export {
-  type CliContextSeam,
-  EXIT,
-  FLAG,
-  type RunCliOpts,
-  runCli,
-  type WriterSink,
-} from "./run";
+export { EXIT, FLAG, type RunCliOpts, runCli, type WriterSink } from "./run";

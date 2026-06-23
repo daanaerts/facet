@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { EXIT, runCli, type WriterSink } from "@facet/cli";
-import { buildContext, type Context } from "@facet/core";
+import type { Actor } from "@facet/core";
+import type { AuthParts } from "@facet/surface-kit";
 import { devContextFor } from "../../../examples/logs/cli";
 import { logsRegistry } from "../../../examples/logs/http";
 import { store } from "../../../examples/logs/store";
@@ -58,8 +59,9 @@ describe("the logs registry over the CLI — one generic dispatcher", () => {
   test("`ls --surface http` keeps only capabilities that project onto http", async () => {
     const { code, out } = await run(["ls", "--surface", "http"]);
     expect(code).toBe(EXIT.ok);
-    // every logs capability declares http, so all four still appear — but the filter ran.
-    expect(out.length).toBe(4);
+    // every logs capability declares http (the jobs trio, unary logs.tail, and the streaming logs.follow +
+    // logs.boom), so all six still appear — but the filter ran.
+    expect(out.length).toBe(6);
     for (const line of out) expect(line).toContain("[agent,http,mcp,cli]");
   });
 
@@ -142,8 +144,7 @@ describe("the logs registry over the CLI — one generic dispatcher", () => {
   test("a missing scope is refused centrally → exit 1 + forbidden", async () => {
     // Drive a contextFor that grants NOTHING to prove the surface forwards a ScopeError unchanged. Built
     // inline so the example `devContextFor` stays a happy-path grant while error mapping is still proven.
-    const denyAll = (seam: { actor: Parameters<typeof buildContext>[0]["actor"] }): Context =>
-      buildContext({ actor: seam.actor, scopes: [], surface: "cli" });
+    const denyAll = (actor: Actor): AuthParts => ({ actor, scopes: [] });
     const { sink, err } = makeSink();
     const code = await runCli(logsRegistry(), ["jobs.list"], { contextFor: denyAll }, sink);
     expect(code).toBe(EXIT.error);
@@ -164,9 +165,9 @@ describe("the logs registry over the CLI — one generic dispatcher", () => {
     // The dev contextFor grants the same scopes regardless of actor, but the actor must reach the seam.
     // Assert by capturing the actor the seam receives.
     let seenActor: { email?: string } | undefined;
-    const captureCtx = (seam: { actor: { kind: string; email?: string } }): Context => {
-      seenActor = seam.actor;
-      return buildContext({ actor: seam.actor, scopes: ["logs:read"], surface: "cli" });
+    const captureCtx = (actor: Actor): AuthParts => {
+      seenActor = actor;
+      return { actor, scopes: ["logs:read"] };
     };
     const { sink } = makeSink();
     await runCli(

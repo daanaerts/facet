@@ -22,6 +22,8 @@ export interface CapabilityCatalogEntry {
   id: string;
   summary: string;
   risk: Risk;
+  /** Whether this capability streams (its result is incremental chunks + a final). Drives SSE affordances. */
+  stream: boolean;
   surfaces: SurfaceKind[];
   input: JsonSchema;
   output: JsonSchema;
@@ -33,6 +35,7 @@ export function catalogEntry(def: CapabilityDef): CapabilityCatalogEntry {
     id: def.id,
     summary: def.summary,
     risk: def.risk,
+    stream: def.stream === true,
     surfaces: def.surfaces,
     input: toJsonSchema(def.input, "input"),
     output: toJsonSchema(def.output, "output"),

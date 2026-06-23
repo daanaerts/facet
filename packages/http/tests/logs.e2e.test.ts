@@ -98,7 +98,16 @@ describe("the logs registry over HTTP — one generic POST /cap/:id", () => {
     };
 
     const ids = capabilities.map((c) => c.id).sort();
-    expect(ids).toEqual(["jobs.cancel", "jobs.list", "jobs.start", "logs.tail"]);
+    // The logs registry projects the jobs trio + the unary `logs.tail` AND the two streaming reads
+    // (`logs.follow` and the mid-stream-failure fixture `logs.boom`) — all declare http, so all appear.
+    expect(ids).toEqual([
+      "jobs.cancel",
+      "jobs.list",
+      "jobs.start",
+      "logs.boom",
+      "logs.follow",
+      "logs.tail",
+    ]);
 
     for (const entry of capabilities) {
       expect(entry.surfaces).toContain("http");

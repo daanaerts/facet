@@ -1,8 +1,11 @@
 import { type Actor, Registry } from "@facet/core";
-import { type AuthResult, createHttpApp, type Headers } from "@facet/http";
+import { createFetchHandler, createHttpApp, type Headers } from "@facet/http";
+import type { AuthParts } from "@facet/surface-kit";
 import jobsCancel from "./capabilities/jobs.cancel.cap";
 import jobsList from "./capabilities/jobs.list.cap";
 import jobsStart from "./capabilities/jobs.start.cap";
+import logsBoom from "./capabilities/logs.boom.cap";
+import logsFollow from "./capabilities/logs.follow.cap";
 import logsTail from "./capabilities/logs.tail.cap";
 import { MemoryLedger } from "./host";
 
@@ -14,10 +17,16 @@ import { MemoryLedger } from "./host";
  * scopes mean, and folds nothing tenant-shaped into the surface because this domain has no tenants.
  */
 
-/** The four logs/jobs capabilities, registered into one registry. */
+/**
+ * The logs/jobs capabilities, registered into one registry: the unary `logs.tail` + the jobs trio, plus the
+ * STREAMING `logs.follow` and the streaming mid-stream-failure fixture `logs.boom` (the latter exercises the
+ * mid-stream-error contract end-to-end on every surface — see `docs/STREAMING-CONTRACT.md`).
+ */
 export function logsRegistry(): Registry {
   const registry = new Registry();
-  for (const def of [logsTail, jobsList, jobsStart, jobsCancel]) registry.register(def);
+  for (const def of [logsTail, logsFollow, logsBoom, jobsList, jobsStart, jobsCancel]) {
+    registry.register(def);
+  }
   return registry;
 }
 
@@ -35,19 +44,32 @@ const DEV_SCOPES = ["logs:read", "jobs:read", "jobs:write"];
  *
  * The ledger is created ONCE here (closed over), not per request, so replays actually hit a shared store.
  */
-export function devAuthenticate(): (headers: Headers) => AuthResult {
+export function devAuthenticate(): (headers: Headers) => AuthParts {
   const ledger = new MemoryLedger();
-  return (_headers: Headers): AuthResult => ({
+  return (_headers: Headers): AuthParts => ({
     actor: DEV_ACTOR,
     scopes: DEV_SCOPES,
     ledger,
   });
 }
 
-/** The built `logs` HTTP app: the registry projected onto HTTP behind the dev authenticator. */
+/**
+ * The portable `logs` HTTP handler: the registry projected onto a Web `(req) => Promise<Response>` behind the
+ * dev authenticator. This is what `serve.ts` mounts in `Bun.serve({ fetch })` — the runtime-pure artifact that
+ * would mount identically under `Deno.serve` or on Node via a WinterCG adapter.
+ */
+export function createLogsFetchHandler() {
+  return createFetchHandler(logsRegistry(), { authenticate: devAuthenticate() });
+}
+
+/**
+ * The built `logs` Elysia app: the same registry behind the same dev authenticator, wrapped in Elysia. Kept so
+ * the e2e tests can drive it headlessly with `app.handle(new Request(...))`; `serve.ts` uses the portable fetch
+ * handler instead.
+ */
 export function createLogsHttpApp() {
   return createHttpApp(logsRegistry(), { authenticate: devAuthenticate() });
 }
 
-/** A ready-to-serve app instance (used by `serve.ts` and importable for `app.handle(...)` in tests). */
+/** A ready-to-serve app instance (used by importing tests for `app.handle(...)`). */
 export const app = createLogsHttpApp();

@@ -21,6 +21,7 @@
       "@facet/cli": ["./packages/cli/src/index.ts"],
       "@facet/mcp": ["./packages/mcp/src/index.ts"],
       "@facet/agent": ["./packages/agent/src/index.ts"],
+      "@facet/surface-kit": ["./packages/surface-kit/src/index.ts"],
       "@facet/parity": ["./packages/parity/src/index.ts"]
     }
   },

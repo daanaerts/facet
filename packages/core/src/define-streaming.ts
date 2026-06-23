@@ -1,6 +1,6 @@
-import type { ZodType, z } from "zod";
 import type { CapabilityDef } from "./capability";
 import type { Context } from "./context";
+import type { StandardSchemaV1 } from "./standard-schema";
 import type { SurfaceKind } from "./surface";
 import { SURFACES } from "./surface";
 
@@ -13,27 +13,40 @@ const ID_RE = /^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)+$/;
  * is an async generator — it `yield`s chunks and `return`s the final — so authoring a stream is just writing
  * the obvious generator, with full input/chunk/final inference driven by the schemas.
  *
+ * As with `defineCapability`, the schemas are typed to `StandardSchemaV1` (the validation contract), so any
+ * Standard-Schema validator works; Zod schemas implement it, so `z.object(...)` flows through unchanged with
+ * the author's inferred types preserved via the spec's `InferInput` / `InferOutput`.
+ *
  * There is deliberately no `risk` field: a streaming capability is `risk:"read"` by construction (streaming
  * is a read idiom), so confirmation and idempotency never enter the picture. Everything else — `scopes`,
  * `surfaces`, `enabled` — matches `defineCapability`.
  */
-export interface StreamingCapabilitySpec<I extends ZodType, C extends ZodType, O extends ZodType> {
+export interface StreamingCapabilitySpec<
+  I extends StandardSchemaV1,
+  C extends StandardSchemaV1,
+  O extends StandardSchemaV1,
+> {
   id: string;
   summary: string;
   input: I;
-  /** The Zod schema for ONE incremental chunk; validated on every yield. */
+  /** The schema for ONE incremental chunk; validated on every yield. */
   chunk: C;
-  /** The Zod schema for the terminal/final value the generator returns; validated once at the end. */
+  /** The schema for the terminal/final value the generator returns; validated once at the end. */
   output: O;
   scopes?: string[];
   /** Defaults to all surfaces. Narrow it to opt the stream out of, say, `cli`. */
   surfaces?: SurfaceKind[];
   enabled?: boolean;
   /**
-   * The streaming handler: `async function*(input, ctx)` that yields `z.infer<C>` chunks and returns a
-   * `z.infer<O>` final. The core validates each yield and the return before they leave `executeStream()`.
+   * The streaming handler: `async function*(input, ctx)` that yields chunk values and returns a final value.
+   * It receives the parsed input (`InferOutput<I>`), yields values matching the chunk schema's input
+   * (`InferInput<C>`) and returns one matching the output schema's input (`InferInput<O>`); the core validates
+   * each yield and the return before they leave `executeStream()`. For Zod this is `z.infer` throughout.
    */
-  handler: (input: z.infer<I>, ctx: Context) => AsyncGenerator<z.infer<C>, z.infer<O>, void>;
+  handler: (
+    input: StandardSchemaV1.InferOutput<I>,
+    ctx: Context,
+  ) => AsyncGenerator<StandardSchemaV1.InferInput<C>, StandardSchemaV1.InferInput<O>, void>;
 }
 
 /**
@@ -46,9 +59,11 @@ export interface StreamingCapabilitySpec<I extends ZodType, C extends ZodType, O
  * `handler` is synthesized to DRAIN the generator to the final, so the non-streaming `handler` contract still
  * holds even though `execute()` routes streaming capabilities through `drainStream` before ever calling it.
  */
-export function defineStreamingCapability<I extends ZodType, C extends ZodType, O extends ZodType>(
-  spec: StreamingCapabilitySpec<I, C, O>,
-): CapabilityDef {
+export function defineStreamingCapability<
+  I extends StandardSchemaV1,
+  C extends StandardSchemaV1,
+  O extends StandardSchemaV1,
+>(spec: StreamingCapabilitySpec<I, C, O>): CapabilityDef {
   if (!ID_RE.test(spec.id)) {
     throw new Error(
       `invalid capability id "${spec.id}" — expected dotted lowercase like "logs.follow"`,

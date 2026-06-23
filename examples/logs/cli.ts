@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-import { type CliContextSeam, runCli } from "@facet/cli";
-import { buildContext, type Context } from "@facet/core";
+import { runCli } from "@facet/cli";
+import type { Actor } from "@facet/core";
+import type { AuthParts } from "@facet/surface-kit";
 import { MemoryLedger } from "./host";
 import { logsRegistry } from "./http";
 
@@ -22,22 +23,15 @@ import { logsRegistry } from "./http";
 const DEV_SCOPES = ["logs:read", "jobs:read", "jobs:write"];
 
 /**
- * A dev `contextFor`: turn the CLI's request seam (actor + confirm + key, supplied by `runCli`) into a
- * Context with the logs/jobs scopes granted and an in-memory idempotency ledger, so a retried `jobs.start`
- * carrying the same `--key` dedupes. The ledger is created ONCE here (closed over), not per call, so replays
- * actually hit a shared store. A real host swaps this for session-derived scopes; the surface does not change.
+ * A dev `contextFor` — the shared {@link AuthParts} seam. `runCli` hands it the calling `actor` (built from
+ * `--actor`, or a default dev user); it returns the logs/jobs scope grant plus one in-memory idempotency
+ * ledger (created ONCE here, closed over), so a retried `jobs.start` carrying the same `--key` dedupes against
+ * a shared store. The SURFACE builds the Context (adding `surface: "cli"` + the parsed `--yes` / `--key`). A
+ * real host swaps this for session-derived scopes; the surface does not change.
  */
-export function devContextFor(): (seam: CliContextSeam) => Context {
+export function devContextFor(): (actor: Actor) => AuthParts {
   const ledger = new MemoryLedger();
-  return (seam: CliContextSeam): Context =>
-    buildContext({
-      actor: seam.actor,
-      scopes: DEV_SCOPES,
-      surface: seam.surface,
-      confirm: seam.confirm,
-      idempotencyKey: seam.idempotencyKey,
-      ledger,
-    });
+  return (actor: Actor): AuthParts => ({ actor, scopes: DEV_SCOPES, ledger });
 }
 
 /**

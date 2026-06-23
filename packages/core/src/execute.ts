@@ -8,16 +8,17 @@ import {
 } from "./errors";
 import { drainStream } from "./execute-stream";
 import type { Registry } from "./registry";
+import { validateStandard } from "./standard-schema";
 
 /**
  * The single chokepoint every surface flows through. GUI, CLI, MCP and the agent all call this exact
  * function, so the invariants live in one place and cannot be skipped:
  *
  *   1. resolve     — look the capability up; refuse if unknown or kill-switched
- *   2. validate    — parse rawInput against the capability's input schema (the one source of truth)
+ *   2. validate    — parse rawInput against the input schema via Standard Schema (the one source of truth)
  *   3. authz       — enforce every declared scope, centrally, before the handler
  *   4. confirm     — gate write/destructive behind surface-supplied confirmation
- *   5. idempotency — replay a stored result for a repeated key instead of re-running
+ *   5. idempotency — atomically claim a repeated key; the loser replays the stored result, never re-runs
  *   6. audit       — record actor + capability + surface for every invocation
  *   7. run + check — execute the handler, then validate its output before it leaves the core
  *
@@ -44,9 +45,12 @@ export async function execute<O = unknown>(
   //     confirmation / idempotency steps below apply, which is exactly why we delegate before reaching them.
   if (def.stream) return drainStream<O>(registry, id, rawInput, ctx);
 
-  // 2. validate input against the capability's own schema — the surface never validates
-  const parsed = def.input.safeParse(rawInput);
-  if (!parsed.success) throw new ValidationError(id, parsed.error.issues);
+  // 2. validate input against the capability's own schema — the surface never validates. Validation goes
+  //    through the Standard Schema contract (`['~standard'].validate`), so the engine accepts any compatible
+  //    validator; a `.issues` result maps to the same `ValidationError` (`validation` code) every surface
+  //    already renders, keeping the parity matrix intact.
+  const parsed = await validateStandard(def.input, rawInput);
+  if (parsed.issues) throw new ValidationError(id, parsed.issues);
 
   // 3. authz — declared scopes enforced before the handler runs (handlers may add more)
   for (const scope of def.scopes) ctx.requireScope(scope);
@@ -54,35 +58,51 @@ export async function execute<O = unknown>(
   // 4. confirmation gate for writes / destructive operations
   if (def.risk !== "read" && !ctx.confirm) throw new ConfirmationRequiredError(id, def.risk);
 
-  // 5. idempotency — only for a non-read carrying a key, when a ledger is present. A replay returns the
-  //    stored result and does NOT re-run the handler. Reads never touch the ledger.
+  // 5. idempotency — only for a non-read carrying a key, when a ledger is present. Reads never touch the
+  //    ledger. The dedup is now ATOMIC INSERT-ONCE: the call CLAIMS the key before running anything, and
+  //    exactly one caller can win that claim (the port backs it with a DB unique constraint / Redis SET NX).
+  //    This closes the concurrent double-submit hole the old `lookup → handler → record` had: two calls with
+  //    the same key could both miss the lookup and both run the handler. Now the loser never runs the handler.
   const dedupe =
     ctx.ledger !== undefined && ctx.idempotencyKey !== undefined && def.risk !== "read";
   if (dedupe && ctx.ledger && ctx.idempotencyKey) {
-    const replayed = await ctx.ledger.lookup(ctx.idempotencyKey, id);
-    if (replayed !== undefined) {
-      ctx.audit("capability.replay", { id, surface: ctx.surface });
-      return replayed as O;
+    const claim = await ctx.ledger.claim(ctx.idempotencyKey, id);
+    if (claim === "lost") {
+      // A loser (a concurrent twin, or a later retry) does NOT run the handler. It reads the winner's
+      // committed result ONCE. If committed, that read IS the replay — return it. If the winner is still
+      // mid-flight (claimed but not yet committed), there is nothing to replay yet: surface `conflict`
+      // (HTTP 409) so the caller retries the same key, rather than blocking the engine on the winner.
+      const replayed = await ctx.ledger.read(ctx.idempotencyKey, id);
+      if (replayed !== undefined) {
+        ctx.audit("capability.replay", { id, surface: ctx.surface });
+        return replayed as O;
+      }
+      throw new FacetError(
+        "conflict",
+        `capability ${id} is already in flight for this idempotency key; retry`,
+        409,
+        { id, idempotencyKey: ctx.idempotencyKey },
+      );
     }
   }
 
   // 6. audit
   ctx.audit("capability.invoke", { id, risk: def.risk, surface: ctx.surface });
 
-  // 7. run + validate output before it leaves the core
-  const out = await def.handler(parsed.data, ctx);
-  const checked = def.output.safeParse(out);
-  if (!checked.success) {
+  // 7. run + validate output before it leaves the core (same Standard Schema path as the input)
+  const out = await def.handler(parsed.value, ctx);
+  const checked = await validateStandard(def.output, out);
+  if (checked.issues) {
     throw new FacetError("internal", `capability ${id} produced invalid output`, 500, {
       id,
-      issues: checked.error.issues,
+      issues: checked.issues,
     });
   }
 
-  // First run of an idempotent write: record the result so the next identical key replays it.
+  // Winner of the claim: commit the validated result so every later caller with this key replays it.
   if (dedupe && ctx.ledger && ctx.idempotencyKey) {
-    await ctx.ledger.record(ctx.idempotencyKey, id, checked.data);
+    await ctx.ledger.commit(ctx.idempotencyKey, id, checked.value);
   }
 
-  return checked.data as O;
+  return checked.value as O;
 }

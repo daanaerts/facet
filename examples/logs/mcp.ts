@@ -1,5 +1,6 @@
-import { type Actor, buildContext, type Context } from "@facet/core";
+import type { Actor } from "@facet/core";
 import { type ContextFor, createMcpServer } from "@facet/mcp";
+import type { AuthParts } from "@facet/surface-kit";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { MemoryLedger } from "./host";
 import { logsRegistry } from "./http";
@@ -20,24 +21,15 @@ const DEV_ACTOR: Actor = { kind: "user", id: "dev@example.com", email: "dev@exam
 const DEV_SCOPES = ["logs:read", "jobs:read", "jobs:write"];
 
 /**
- * A dev `contextFor`: every tool call is the same trusted dev user, granted the logs/jobs scopes, with an
- * in-memory idempotency ledger so a retried `jobs.start` carrying `idempotencyKey` dedupes. The surface
- * reads `confirm`/`idempotencyKey` off the tool arguments and hands them here; the host folds them into the
- * Context via `buildContext` with `surface: "mcp"`. A real host swaps this for real authentication; the
- * surface does not change. The ledger is created ONCE here (closed over), not per call, so replays hit a
- * shared store.
+ * A dev `contextFor` — the shared {@link AuthParts} seam. Every tool call is the same trusted dev user,
+ * granted the logs/jobs scopes, with one in-memory idempotency ledger (created ONCE here, closed over) so a
+ * retried `jobs.start` carrying the same `idempotencyKey` dedupes. The SURFACE reads `confirm`/`idempotencyKey`
+ * off the tool arguments and builds the Context (`surface: "mcp"`); the host returns only "who + what may they
+ * do". A real host swaps this for real authentication; the surface does not change.
  */
 export function devContextFor(): ContextFor {
   const ledger = new MemoryLedger();
-  return ({ confirm, idempotencyKey }): Context =>
-    buildContext({
-      actor: DEV_ACTOR,
-      scopes: DEV_SCOPES,
-      surface: "mcp",
-      confirm,
-      idempotencyKey,
-      ledger,
-    });
+  return (): AuthParts => ({ actor: DEV_ACTOR, scopes: DEV_SCOPES, ledger });
 }
 
 /** The built `logs` MCP server: the registry projected onto MCP behind the dev `contextFor`. */

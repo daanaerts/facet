@@ -16,12 +16,4 @@ export {
   type ToolContext,
   type ToolProgress,
 } from "./server";
-export {
-  CONFIRM_FIELD,
-  capabilityId,
-  IDEMPOTENCY_FIELD,
-  readToolMeta,
-  type ToolMeta,
-  toolFor,
-  toolName,
-} from "./tool";
+export { capabilityId, toolFor, toolName } from "./tool";

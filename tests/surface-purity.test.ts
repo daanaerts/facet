@@ -20,8 +20,13 @@ import { Glob } from "bun";
  * LIMITATIONS (please weigh in the audit): this is a TEXTUAL scan, not an AST analysis. It will not catch a
  * check reached through an alias (`const s = def.input; s.safeParse(...)`) or one factored into a helper
  * module OUTSIDE these dirs. Extend FORBIDDEN / SURFACE_DIRS as the surface set or the schema dialect
- * changes — in particular the Standard-Schema migration must KEEP the `~standard` guard below (that becomes
- * the new validation entry point a surface must never call).
+ * changes.
+ *
+ * POST STANDARD-SCHEMA MIGRATION: validation now flows through the Standard Schema contract —
+ * `schema['~standard'].validate(value)` in `execute()` / `executeStream()`. So `~standard` is THE validation
+ * entry point a surface must never name (any access — dotted or `['~standard']` — means the surface is
+ * validating), and it is guarded below. The Zod-specific `safeParse` / `def.input.parse(` guards are KEPT as
+ * a second line of defence: even the default validator must not be called directly from a surface.
  */
 
 const ROOT = `${import.meta.dir}/..`;
@@ -36,10 +41,13 @@ const SURFACE_DIRS = [
 
 /** The chokepoint's own work — forbidden in any surface. Each pattern is a thing only the core may do. */
 const FORBIDDEN: { rx: RegExp; why: string }[] = [
-  { rx: /\bsafeParse\s*\(/, why: "input validation (Zod safeParse) — only execute() validates" },
   {
     rx: /~standard/,
-    why: "input validation (StandardSchema '~standard') — only execute() validates",
+    why: "input validation (Standard Schema '~standard'.validate) — only execute()/executeStream() validates",
+  },
+  {
+    rx: /\bsafeParse\s*\(/,
+    why: "input validation (Zod safeParse, the default validator) — only execute() validates",
   },
   {
     rx: /def\s*\.\s*(input|output)\s*\.\s*parse\s*\(/,

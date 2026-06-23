@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Facet Console</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #171a21; --line: #262b36; --ink: #e6e9ef; --mut: #8b93a3;
+    --read: #3fb950; --write: #d29922; --destructive: #f85149; --accent: #58a6ff; --err: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  header { padding: 22px 24px 8px; }
+  header h1 { margin: 0; font-size: 19px; letter-spacing: .2px; }
+  header p { margin: 4px 0 0; color: var(--mut); }
+  header code { color: var(--accent); }
+  main { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); padding: 16px 24px 48px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .card h2 { margin: 0; font: 600 14px ui-monospace, SFMono-Regular, Menlo, monospace; display: flex; align-items: center; gap: 8px; }
+  .badge { font: 600 10px ui-sans-serif, system-ui; text-transform: uppercase; letter-spacing: .4px; padding: 2px 7px; border-radius: 999px; color: #0b0d11; }
+  .badge.read { background: var(--read); } .badge.write { background: var(--write); } .badge.destructive { background: var(--destructive); }
+  .badge.stream { background: var(--accent); }
+  .summary { color: var(--mut); margin: 6px 0 12px; }
+  form { display: grid; gap: 8px; }
+  label { display: grid; gap: 3px; font-size: 12px; color: var(--mut); }
+  label .req { color: var(--write); }
+  input, select { background: #0c0e13; border: 1px solid var(--line); color: var(--ink); border-radius: 6px; padding: 7px 9px; font: 13px ui-monospace, Menlo, monospace; }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  .row { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+  button { background: var(--accent); color: #06121f; border: 0; border-radius: 6px; padding: 8px 14px; font: 600 13px ui-sans-serif, system-ui; cursor: pointer; }
+  button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  button.warn { background: var(--write); color: #1a1205; }
+  button:disabled { opacity: .5; cursor: default; }
+  .out { margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 9px; display: none; }
+  .out.show { display: block; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 12px ui-monospace, Menlo, monospace; }
+  .ok { color: var(--read); } .err { color: var(--err); } .chunk { color: var(--ink); opacity: .85; }
+  .line { padding: 1px 0; }
+  .note { color: var(--mut); font-size: 12px; }
+  .confirm { background: #2b1d05; border: 1px solid var(--write); border-radius: 6px; padding: 8px 10px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Facet Console</h1>
+  <p>Every form below is auto-generated from <code>GET /cap</code> — one card per capability, nothing app-specific. The same page works for any Facet app.</p>
+</header>
+<main id="cards"><p class="note" style="padding:8px 24px">Loading the catalogue…</p></main>
+
+<script type="module">
+const $ = (t, props = {}, kids = []) => {
+  const el = Object.assign(document.createElement(t), props);
+  for (const k of [].concat(kids)) el.append(k);
+  return el;
+};
+
+async function boot() {
+  const main = document.getElementById("cards");
+  let caps;
+  try {
+    caps = (await (await fetch("/cap")).json()).capabilities;
+  } catch (e) {
+    main.replaceChildren($("p", { className: "err", textContent: "Could not load /cap: " + e.message }));
+    return;
+  }
+  main.replaceChildren(...caps.map(card));
+}
+
+function card(cap) {
+  const props = cap.input?.properties ?? {};
+  const required = new Set(cap.input?.required ?? []);
+  const form = $("form");
+  for (const [key, prop] of Object.entries(props)) form.append(field(key, prop, required.has(key)));
+
+  const out = $("div", { className: "out" });
+  const runBtn = $("button", { type: "submit", textContent: cap.stream ? "Stream" : "Run" });
+  form.append($("div", { className: "row" }, runBtn));
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    out.replaceChildren();
+    out.classList.add("show");
+    let input;
+    try { input = readForm(form, props); }
+    catch (err) { return line(out, "bad input JSON: " + err.message, "err"); }
+    runBtn.disabled = true;
+    try {
+      if (cap.stream) await runStream(cap.id, input, out);
+      else await runUnary(cap, input, out);
+    } finally { runBtn.disabled = false; }
+  });
+
+  return $("div", { className: "card" }, [
+    $("h2", {}, [cap.id, $("span", { className: "badge " + cap.risk, textContent: cap.risk }),
+      ...(cap.stream ? [$("span", { className: "badge stream", textContent: "stream" })] : [])]),
+    $("div", { className: "summary", textContent: cap.summary }),
+    form, out,
+  ]);
+}
+
+function field(key, prop, req) {
+  const labelKids = [$("span", {}, [key, req ? $("span", { className: "req", textContent: " *" }) : ""])];
+  let control;
+  if (Array.isArray(prop.enum)) {
+    control = $("select", { name: key });
+    for (const v of prop.enum) control.append($("option", { value: v, textContent: String(v) }));
+  } else if (prop.type === "boolean") {
+    control = $("select", { name: key });
+    for (const [v, t] of [["", "(unset)"], ["true", "true"], ["false", "false"]]) control.append($("option", { value: v, textContent: t }));
+  } else {
+    control = $("input", {
+      name: key,
+      type: (prop.type === "number" || prop.type === "integer") ? "number" : "text",
+      placeholder: prop.default !== undefined ? "default: " + JSON.stringify(prop.default) : (prop.type ?? "string"),
+    });
+    if (prop.default !== undefined && typeof prop.default !== "object") control.value = String(prop.default);
+  }
+  return $("label", {}, [...labelKids, control]);
+}
+
+function readForm(form, props) {
+  const input = {};
+  for (const [key, prop] of Object.entries(props)) {
+    const el = form.querySelector(`[name="${CSS.escape(key)}"]`);
+    if (!el) continue;
+    const raw = el.value;
+    if (raw === "") continue;                              // empty ⇒ omit (let the schema default / optional apply)
+    if (prop.type === "boolean") input[key] = raw === "true";
+    else if (prop.type === "number" || prop.type === "integer") input[key] = Number(raw);
+    else if (prop.type === "array" || prop.type === "object") input[key] = JSON.parse(raw);
+    else input[key] = raw;
+  }
+  return input;
+}
+
+// Unary call with the propose→confirm handshake modelled in the UI exactly as the schema models it:
+// a write/destructive runs once WITHOUT confirm, and only on `confirmation_required` do we reveal Confirm.
+async function runUnary(cap, input, out, confirm = false) {
+  const headers = { "content-type": "application/json" };
+  if (confirm) headers["x-facet-confirm"] = "true";
+  const res = await fetch(`/cap/${cap.id}`, { method: "POST", headers, body: JSON.stringify(input) });
+  const body = await res.json();
+  if (res.ok) return block(out, body, "ok");
+  if (body.code === "confirmation_required" && !confirm) return proposeConfirm(cap, input, out);
+  block(out, body, "err");
+}
+
+function proposeConfirm(cap, input, out) {
+  out.replaceChildren();
+  const btn = $("button", { className: "warn", textContent: `Confirm & run (${cap.risk})` });
+  btn.addEventListener("click", () => { out.replaceChildren(); runUnary(cap, input, out, true); });
+  out.append($("div", { className: "confirm" }, [
+    $("div", { className: "note", textContent: `This ${cap.risk} action is gated by the chokepoint — the server replied confirmation_required.` }),
+    $("div", { className: "row" }, btn),
+  ]));
+}
+
+// Streaming over fetch (EventSource can't POST): read the SSE body, render each chunk live, then result/error.
+async function runStream(id, input, out) {
+  const res = await fetch(`/cap/${id}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "text/event-stream" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok || !res.body) return block(out, await res.json().catch(() => ({ code: "error", message: res.statusText })), "err");
+  const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) { frame(buf.slice(0, i), out); buf = buf.slice(i + 2); }
+  }
+}
+
+function frame(raw, out) {
+  let event = null, data = null;
+  for (const ln of raw.split("\n")) {
+    if (ln.startsWith("event:")) event = ln.slice(6).trim();
+    else if (ln.startsWith("data:")) data = ln.slice(5).trim();
+  }
+  if (data == null) return;
+  const parsed = JSON.parse(data);
+  if (event === "result") line(out, "▣ result  " + JSON.stringify(parsed), "ok");
+  else if (event === "error") line(out, "✗ error  " + JSON.stringify(parsed), "err");
+  else line(out, "• " + JSON.stringify(parsed), "chunk");
+}
+
+function block(out, obj, cls) { out.append($("pre", { className: cls, textContent: JSON.stringify(obj, null, 2) })); }
+function line(out, text, cls) { out.classList.add("show"); out.append($("div", { className: "line " + cls }, $("pre", { className: cls, textContent: text }))); }
+
+boot();
+</script>
+</body>
+</html>

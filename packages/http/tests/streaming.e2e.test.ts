@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { Registry } from "@facet/core";
-import { createHttpApp } from "@facet/http";
+import { createFetchHandler } from "@facet/http";
+import logsBoom from "../../../examples/logs/capabilities/logs.boom.cap";
 import logsFollow from "../../../examples/logs/capabilities/logs.follow.cap";
 import logsTail from "../../../examples/logs/capabilities/logs.tail.cap";
 import { store } from "../../../examples/logs/store";
@@ -8,23 +9,25 @@ import { store } from "../../../examples/logs/store";
 /**
  * THE HTTP STREAMING PROOF.
  *
- * `logs.follow` — a streaming capability — projected onto HTTP, driven headlessly with `app.handle(Request)`
- * (no port, no real fetch). WITH `Accept: text/event-stream` the surface renders the core's `executeStream()`
- * as Server-Sent Events: one `data: <json>` frame per validated chunk, then a terminal `event: result` frame
- * carrying the validated final. WITHOUT that Accept header the same capability drains via `execute()` to its
- * final JSON (back-compat). Every invariant still lives in `@facet/core`; the surface only renders.
+ * `logs.follow` — a streaming capability — projected onto HTTP via the PORTABLE Web fetch handler, driven
+ * headlessly with `handler(new Request(...))` (no port, no real fetch, no web framework). WITH
+ * `Accept: text/event-stream` the surface renders the core's `executeStream()` as Server-Sent Events: one
+ * `data: <json>` frame per validated chunk, then a terminal `event: result` frame carrying the validated final.
+ * WITHOUT that Accept header the same capability drains via `execute()` to its final JSON (back-compat). Every
+ * invariant still lives in `@facet/core`; the surface — built on `ReadableStream` + `Response` alone — only
+ * renders.
  */
 
-/** A registry with the streaming `logs.follow` plus its unary sibling `logs.tail`. */
+/** A registry with the streaming `logs.follow`, its unary sibling `logs.tail`, and the mid-stream fixture. */
 function registry(): Registry {
   const r = new Registry();
-  for (const def of [logsFollow, logsTail]) r.register(def);
+  for (const def of [logsFollow, logsTail, logsBoom]) r.register(def);
   return r;
 }
 
-/** A streaming logs app behind a dev authenticator that grants the scopes (default: logs:read). */
+/** A streaming logs fetch handler behind a dev authenticator that grants the scopes (default: logs:read). */
 function makeApp(scopes: string[] = ["logs:read"]) {
-  return createHttpApp(registry(), {
+  return createFetchHandler(registry(), {
     authenticate: () => ({ actor: { kind: "service" }, scopes }),
   });
 }
@@ -61,7 +64,7 @@ async function post(
   body: unknown,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; contentType: string; text: string }> {
-  const res = await app.handle(
+  const res = await app(
     new Request(`http://localhost/cap/${id}`, {
       method: "POST",
       headers: { "content-type": "application/json", ...headers },
@@ -147,5 +150,60 @@ describe("a streaming capability over HTTP — SSE with Accept: text/event-strea
     expect(status).toBe(403);
     expect(contentType).not.toContain("text/event-stream");
     expect(JSON.parse(text)).toMatchObject({ code: "forbidden" });
+  });
+});
+
+/**
+ * MID-STREAM FAILURE over HTTP SSE (see `docs/STREAMING-CONTRACT.md`). The 200 + `text/event-stream` status is
+ * already committed once the first frame is out, so a failure AFTER chunk K cannot be a status. Instead the
+ * surface emits the K `data:` chunk frames, then a TERMINAL `event: error` frame carrying `{ code, message }`,
+ * and ends — NOT an `event: result` frame. The status stays 200 (the stream opened successfully); the failure
+ * lives in-band. Both triggers — a handler throw and a bad chunk — render identically (only the code differs).
+ */
+describe("mid-stream failure over SSE: K data frames, then a terminal event: error frame", () => {
+  const TWO_DATA_FRAMES = [
+    { event: undefined, data: { line: "boom started", n: 1 } },
+    { event: undefined, data: { line: "still fine", n: 2 } },
+  ];
+
+  test("a handler throw → two data frames, then event: error carrying the typed code (200, no result frame)", async () => {
+    const { status, contentType, text } = await post(
+      makeApp(),
+      "logs.boom",
+      { mode: "throw" },
+      { accept: "text/event-stream" },
+    );
+    // The stream OPENED fine — status is the already-committed 200 SSE, never the FacetError's 501.
+    expect(status).toBe(200);
+    expect(contentType).toContain("text/event-stream");
+
+    const frames = parseSse(text);
+    expect(frames).toHaveLength(3);
+    // The two valid chunks arrived in order as plain data frames …
+    expect(frames.slice(0, 2)).toEqual(TWO_DATA_FRAMES);
+    // … then the terminal frame is `event: error` with the FacetError's own code/message — NOT a result frame.
+    expect(frames[2]).toEqual({
+      event: "error",
+      data: { code: "connector_unavailable", message: "log source went away mid-stream" },
+    });
+    // A failed stream emits NO result frame — the terminal event name is how a client tells failure from done.
+    expect(frames.some((f) => f.event === "result")).toBe(false);
+  });
+
+  test("a bad chunk → two data frames, then event: error with code internal (200, no result frame)", async () => {
+    const { status, contentType, text } = await post(
+      makeApp(),
+      "logs.boom",
+      { mode: "bad-chunk" },
+      { accept: "text/event-stream" },
+    );
+    expect(status).toBe(200);
+    expect(contentType).toContain("text/event-stream");
+
+    const frames = parseSse(text);
+    expect(frames).toHaveLength(3);
+    expect(frames.slice(0, 2)).toEqual(TWO_DATA_FRAMES);
+    expect(frames[2]).toMatchObject({ event: "error", data: { code: "internal" } });
+    expect(frames.some((f) => f.event === "result")).toBe(false);
   });
 });

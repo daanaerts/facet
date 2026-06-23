@@ -1,11 +1,5 @@
-import {
-  type Actor,
-  type Context,
-  execute,
-  executeStream,
-  FacetError,
-  type Registry,
-} from "@facet/core";
+import { type Actor, execute, executeStream, FacetError, type Registry } from "@facet/core";
+import { type AuthParts, contextFromParts } from "@facet/surface-kit";
 import { flagString, parseArgs } from "./args";
 
 /**
@@ -46,26 +40,15 @@ export const EXIT = {
 } as const;
 
 /**
- * The host seam. `runCli` parses who the caller claims to be (`--actor`) and what they confirmed
- * (`--yes` / `--key`) off the command line and hands those parts here; the host returns a fully-formed
- * Context with the SCOPES granted. This is the exact division the carve requires: the surface shapes the
- * request, the host decides authorization. There is deliberately no tenant/db/install in the seam — a
- * multi-tenant host folds its tenant into the granted scopes (and the idempotency key) right here.
+ * The host seam — the same {@link AuthParts} contract every Facet surface uses. `runCli` builds the calling
+ * `actor` (from `--actor`, or a default dev user) and hands it here; the host returns "what they may do"
+ * (`{ actor, scopes, ledger? }`). The SURFACE then assembles the Context — adding `surface: "cli"` and the
+ * `--yes` / `--key` it parsed — via `contextFromParts`. The surface shapes the request; the host decides
+ * authorization. There is deliberately no tenant/db/install here — a multi-tenant host folds its tenant into
+ * the granted `scopes` (and the idempotency key) inside this function. Sync or async.
  */
-export interface CliContextSeam {
-  /** Who the CLI says is calling. Built from `--actor <email>`, or a default dev actor when absent. */
-  actor: Actor;
-  /** `--yes` — the surface's confirmation for the core's write/destructive gate. */
-  confirm: boolean;
-  /** `--key <k>` — the optional idempotency key for a retried write. */
-  idempotencyKey?: string;
-  /** Always `"cli"` here — the surface that established the Context. */
-  surface: "cli";
-}
-
-/** What a host supplies to {@link runCli}: the one function that turns the request seam into a Context. */
 export interface RunCliOpts {
-  contextFor: (seam: CliContextSeam) => Context | Promise<Context>;
+  contextFor: (actor: Actor) => AuthParts | Promise<AuthParts>;
 }
 
 /**
@@ -167,12 +150,13 @@ async function runCapability(
   }
 
   try {
-    // The host seam: the surface shapes the request (who + confirm + key), the host grants the scopes.
-    const ctx = await opts.contextFor({
-      actor: actorFrom(flags),
+    // The host seam: the surface builds the actor + reads confirm/key off the flags; the host grants the
+    // scopes; the surface assembles the Context (adding `surface: "cli"`) via `contextFromParts`.
+    const parts = await opts.contextFor(actorFrom(flags));
+    const ctx = contextFromParts(parts, {
+      surface: "cli",
       confirm: flags[FLAG.confirm] === true,
       idempotencyKey: flagString(flags, FLAG.idempotencyKey),
-      surface: "cli",
     });
 
     // STREAMING (additive): a streaming capability is the CLI's incremental idiom. Drive the core's
@@ -180,6 +164,12 @@ async function runCapability(
     // print ONE JSON line per chunk to stdout AS IT ARRIVES (so a `tail`-style follow scrolls live), then
     // the validated final value as the last line. A non-streaming capability is unchanged: one final line.
     // The branch is purely a rendering choice; both paths flow through core, which owns every invariant.
+    //
+    // MID-STREAM FAILURE (see `docs/STREAMING-CONTRACT.md`): if the stream throws AFTER K chunks (a bad chunk
+    // or a handler throw), the K chunk lines are already on stdout; the throw propagates to the shared `catch`
+    // below, which prints `✗ <code>: <message>` to stderr and returns exit 1 — and we never reach the final
+    // line. So a failed stream ends in `✗` + exit 1 with no final line, exactly as a pre-stream refusal does,
+    // only preceded by the chunks that made it out. The core guarantees the throw is a `FacetError`.
     const def = registry.get(id);
     if (def?.stream) {
       const gen = executeStream(registry, id, input, ctx);

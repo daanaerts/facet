@@ -1,0 +1,4 @@
+# Test harness config. The preload runs before any test file, so it sets the todo example's database to an
+# in-memory SQLite db — tests never touch (or depend on) the persisted demo file at examples/todo/.data/.
+[test]
+preload = ["./test-setup.ts"]

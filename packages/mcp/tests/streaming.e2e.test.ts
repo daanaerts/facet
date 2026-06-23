@@ -3,6 +3,7 @@ import { buildContext, type Context, Registry } from "@facet/core";
 import { type ContextFor, createMcpServer, toolName } from "@facet/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import logsBoom from "../../../examples/logs/capabilities/logs.boom.cap";
 import logsFollow from "../../../examples/logs/capabilities/logs.follow.cap";
 import logsTail from "../../../examples/logs/capabilities/logs.tail.cap";
 import { store } from "../../../examples/logs/store";
@@ -19,10 +20,10 @@ import { store } from "../../../examples/logs/store";
  * drains to the same `structuredContent` — proven by the last test.
  */
 
-/** A registry with the streaming `logs.follow` plus its unary sibling `logs.tail`. */
+/** A registry with the streaming `logs.follow`, its unary sibling `logs.tail`, and the mid-stream fixture. */
 function registry(): Registry {
   const r = new Registry();
-  for (const def of [logsFollow, logsTail]) r.register(def);
+  for (const def of [logsFollow, logsTail, logsBoom]) r.register(def);
   return r;
 }
 
@@ -125,5 +126,67 @@ describe("@facet/mcp streams a capability — progress notifications per chunk +
     expect((JSON.parse(text ?? "{}") as { code?: string }).code).toBe("forbidden");
 
     await client.close();
+  });
+});
+
+/**
+ * MID-STREAM FAILURE on MCP (see `docs/STREAMING-CONTRACT.md`). The K `notifications/progress` for the good
+ * chunks have already been delivered to the client's `onprogress` and cannot be recalled. On the throw the
+ * surface returns an `isError` tool result carrying `{ code, message }` in `content` TEXT and deliberately NO
+ * `structuredContent` — byte-for-byte the same shape as a unary MCP error (so the SDK Client does not validate
+ * the error body against the tool's outputSchema and swallow it). Both triggers render identically.
+ */
+describe("mid-stream failure on MCP: K progress notifications, then an isError result (no structuredContent)", () => {
+  const TWO_CHUNKS = [
+    { progress: 1, chunk: { line: "boom started", n: 1 } },
+    { progress: 2, chunk: { line: "still fine", n: 2 } },
+  ];
+
+  /** Call the boom fixture in a given mode with onprogress wired; return the progress seen + the tool result. */
+  async function callBoom(mode: string) {
+    const client = await connect(createMcpServer(registry(), { contextFor: contextFor() }));
+    const seen: { progress: number; chunk: unknown }[] = [];
+    const res = await client.callTool(
+      { name: toolName("logs.boom"), arguments: { mode } },
+      undefined,
+      {
+        onprogress: (p) =>
+          seen.push({ progress: p.progress, chunk: p.message ? JSON.parse(p.message) : undefined }),
+      },
+    );
+    await client.close();
+    return { seen, res };
+  }
+
+  /** Pull the `{ code, message }` body out of an error result's `content` text (where the contract puts it). */
+  function errorBody(res: Awaited<ReturnType<typeof callBoom>>["res"]): {
+    code?: string;
+    message?: string;
+  } {
+    const text = (res.content as Array<{ type: string; text?: string }>).find(
+      (c) => c.type === "text",
+    )?.text;
+    return JSON.parse(text ?? "{}");
+  }
+
+  test("a handler throw: two progress notifications fired, then an isError result with the typed code", async () => {
+    const { seen, res } = await callBoom("throw");
+    // The two chunks were delivered as real progress notifications BEFORE the failure …
+    expect(seen).toEqual(TWO_CHUNKS);
+    // … then the failure is the unary error shape: isError + { code, message } in text, NO structuredContent.
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
+    expect(errorBody(res)).toEqual({
+      code: "connector_unavailable",
+      message: "log source went away mid-stream",
+    });
+  });
+
+  test("a bad chunk: two progress notifications fired, then an isError result with code internal", async () => {
+    const { seen, res } = await callBoom("bad-chunk");
+    expect(seen).toEqual(TWO_CHUNKS);
+    expect(res.isError).toBe(true);
+    expect(res.structuredContent).toBeUndefined();
+    expect(errorBody(res).code).toBe("internal");
   });
 });

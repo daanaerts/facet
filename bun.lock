@@ -5,7 +5,13 @@
     "": {
       "name": "facet",
       "dependencies": {
+        "@facet/agent": "workspace:*",
+        "@facet/cli": "workspace:*",
         "@facet/core": "workspace:*",
+        "@facet/http": "workspace:*",
+        "@facet/mcp": "workspace:*",
+        "@facet/surface-kit": "workspace:*",
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "zod": "^4.0.0",
       },
       "devDependencies": {
@@ -69,6 +75,13 @@
         "zod": "^4.0.0",
       },
     },
+    "packages/surface-kit": {
+      "name": "@facet/surface-kit",
+      "version": "0.0.0",
+      "dependencies": {
+        "@facet/core": "workspace:*",
+      },
+    },
   },
   "packages": {
     "@biomejs/biome": ["@biomejs/biome@2.5.1", "", { "optionalDependencies": { "@biomejs/cli-darwin-arm64": "2.5.1", "@biomejs/cli-darwin-x64": "2.5.1", "@biomejs/cli-linux-arm64": "2.5.1", "@biomejs/cli-linux-arm64-musl": "2.5.1", "@biomejs/cli-linux-x64": "2.5.1", "@biomejs/cli-linux-x64-musl": "2.5.1", "@biomejs/cli-win32-arm64": "2.5.1", "@biomejs/cli-win32-x64": "2.5.1" }, "bin": { "biome": "bin/biome" } }, "sha512-IXWLCxKmae+rI7LOHS1B3EbVisQ6GRAWbhN9msa6KjNCyFWrvKZWR4oUdinaNssrV852OrSHuSPa95h1GPJc7Q=="],
@@ -104,6 +117,8 @@
     "@facet/mcp": ["@facet/mcp@workspace:packages/mcp"],
 
     "@facet/parity": ["@facet/parity@workspace:packages/parity"],
+
+    "@facet/surface-kit": ["@facet/surface-kit@workspace:packages/surface-kit"],
 
     "@hono/node-server": ["@hono/node-server@1.19.14", "", { "peerDependencies": { "hono": "^4" } }, "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="],
 

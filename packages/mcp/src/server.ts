@@ -6,6 +6,7 @@ import {
   NotFoundError,
   type Registry,
 } from "@facet/core";
+import { type AuthParts, contextFromParts, splitContextFields } from "@facet/surface-kit";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -14,7 +15,7 @@ import {
   type ServerNotification,
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
-import { capabilityId, readToolMeta, toolFor } from "./tool";
+import { capabilityId, toolFor } from "./tool";
 
 /**
  * The MCP surface — the registry projected onto a Model Context Protocol server, written ONCE and run over
@@ -41,28 +42,24 @@ import { capabilityId, readToolMeta, toolFor } from "./tool";
  */
 
 /**
- * The surface-shaping fields the MCP server hands a host's `contextFor`: who/what the host authenticates
- * against is the host's business, but the per-call confirmation and idempotency key are read off the tool
- * arguments by the surface and passed through so the host can fold them into the Context it builds (via
- * `buildContext`). This is the MCP analogue of the HTTP surface's header read.
+ * What the MCP server hands a host's `contextFor`: just the capability id being dispatched, in case the host
+ * varies its grant by capability. The per-call `confirm` / `idempotencyKey` are NOT here — the surface reads
+ * them off the tool arguments itself (`splitContextFields`) and injects them when it builds the Context, so
+ * the host only ever decides "who + what may they do".
  */
 export interface ToolContext {
-  /** The capability id being dispatched (dotted form), in case the host scopes the Context by it. */
+  /** The capability id being dispatched (dotted form), in case the host scopes its grant by capability. */
   id: string;
-  /** Surface-supplied confirmation for the core's write/destructive gate. */
-  confirm: boolean;
-  /** Optional idempotency key for a retried write. */
-  idempotencyKey?: string;
 }
 
 /**
- * The host-supplied authenticator for the MCP surface: turn "who is calling + what they confirmed" into a
- * Context. This is the host's whole contribution — the seam where a real app verifies credentials and
- * decides scopes — mirroring HTTP's `authenticate`. It may be sync or async. There is deliberately no
- * tenant, db, install or appId in its signature: a multi-tenant host folds the tenant into the scopes and
- * the idempotency key when it builds the Context.
+ * The host-supplied authenticator for the MCP surface — the same {@link AuthParts} seam every Facet surface
+ * uses. It returns "who is calling + what may they do" (`{ actor, scopes, ledger? }`); the SURFACE turns that
+ * into a Context (adding `surface: "mcp"` + the per-call confirm/key it split off the arguments) via
+ * `contextFromParts`. It may be sync or async. There is deliberately no tenant/db/install/appId: a
+ * multi-tenant host folds its tenant into the `scopes` (and the idempotency key) before returning.
  */
-export type ContextFor = (meta: ToolContext) => Context | Promise<Context>;
+export type ContextFor = (meta: ToolContext) => AuthParts | Promise<AuthParts>;
 
 /** Options shared by the dispatch helper and the server: the host's `contextFor` seam. */
 export interface McpOptions {
@@ -140,6 +137,13 @@ function toErrorResult(err: unknown): CallToolResult {
  * This path is taken only when the client requested progress (a `progressToken` is present). Without one the
  * caller falls back to `execute()`, which drains the same stream to the same final — there is simply nowhere
  * to address per-chunk notifications, so emitting them would be undeliverable.
+ *
+ * MID-STREAM FAILURE (see `docs/STREAMING-CONTRACT.md`): if `executeStream()` throws AFTER K chunks (a bad
+ * chunk or a handler throw), the K `notifications/progress` have already gone out and cannot be recalled. The
+ * throw is NOT caught here — it propagates to `dispatchTool`'s `catch`, which returns `toErrorResult(err)`: an
+ * `isError` result carrying `{ code, message }` in `content` text and DELIBERATELY no `structuredContent`,
+ * byte-for-byte the same shape as a unary MCP error (the error body is not a valid capability output, so it
+ * must not ride as `structuredContent` against the tool's `outputSchema`). The core guarantees a `FacetError`.
  */
 async function runStreamingTool(
   registry: Registry,
@@ -202,9 +206,10 @@ export async function dispatchTool(
     return toErrorResult(new NotFoundError(`capability not found: ${id}`, { id }));
   }
 
-  const { input, confirm, idempotencyKey } = readToolMeta(args);
+  const { input, confirm, idempotencyKey } = splitContextFields(args);
   try {
-    const ctx = await opts.contextFor({ id, confirm, idempotencyKey });
+    const parts = await opts.contextFor({ id });
+    const ctx = contextFromParts(parts, { surface: "mcp", confirm, idempotencyKey });
     // A streaming capability with a client-supplied progress token streams real progress notifications; any
     // other case (non-streaming, or no token to address) drains through `execute()` to the validated final.
     if (def.stream && progress) {
