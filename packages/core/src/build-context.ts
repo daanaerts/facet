@@ -21,6 +21,11 @@ export interface BuildContextOpts {
   idempotencyKey?: string;
   /** Optional idempotency port; when present the chokepoint replays a stored result. */
   ledger?: Ledger;
+  /**
+   * Optional host-set typed claims about the caller (`{ workspaceId, role, … }`), distinct from `scopes`. The
+   * engine never reads it; it is a typed home for tenancy/role so a handler need not scan `scopes` strings.
+   */
+  claims?: Record<string, unknown>;
   /** Optional audit sink; defaults to a no-op so a surface need not supply one. */
   audit?: (event: string, data?: unknown) => void;
 }
@@ -48,6 +53,7 @@ export function buildContext(opts: BuildContextOpts): Context {
     confirm: opts.confirm ?? false,
     idempotencyKey: opts.idempotencyKey,
     ledger: opts.ledger,
+    claims: opts.claims,
     requireScope(scope: string): void {
       if (!scopes.includes(scope) && !scopes.includes("*")) throw new ScopeError(scope);
     },

@@ -9,9 +9,11 @@ import {
 } from "@facet/core";
 import {
   type AuthParts,
+  capabilityId,
   contextFromParts,
   mergeContextFields,
   splitContextFields,
+  toolName,
 } from "@facet/surface-kit";
 
 /**
@@ -59,8 +61,14 @@ import {
  * (auto-run a read, draw a confirm step for a write/destructive).
  */
 export interface AgentTool {
-  /** The capability id, dotted and unchanged — in-process agents need no name mangling. */
+  /** The capability id, dotted and unchanged — the name to call `dispatchToolCall` with in-process. */
   name: string;
+  /**
+   * The Anthropic-regex-safe wire name (dots → `__`). Advertise THIS as the tool name to the real Messages
+   * API (a dotted name is a 400). The model emits it on a `tool_use`, and `dispatchToolCall` / `streamToolCall`
+   * accept it back (mapping it to the capability id), so a host driving a live LLM needs no name glue.
+   */
+  wireName: string;
   /** The capability summary — the tool description the model reads. */
   description: string;
   /** The capability input as JSON Schema, with `confirm`/`idempotencyKey` merged in where they apply. */
@@ -89,10 +97,15 @@ export interface DispatchOpts {
   contextFor: ContextFor;
 }
 
-/** The result of dispatching a tool call: the capability output on success, or a translated error code. */
+/**
+ * The result of dispatching a tool call: the capability output on success, or the translated FacetError on
+ * refusal. The error carries the CODE *and the MESSAGE* (and any `data`) — because when you feed a tool
+ * failure back to an LLM, the message ("missing required scope: inbox:admin", "thread not found: thr_9") is
+ * the part the model needs to adapt; the code alone is not actionable.
+ */
 export type DispatchResult =
-  | { output: unknown; errorCode?: undefined }
-  | { output?: undefined; errorCode: string };
+  | { output: unknown; errorCode?: undefined; errorMessage?: undefined; errorData?: undefined }
+  | { output?: undefined; errorCode: string; errorMessage: string; errorData?: unknown };
 
 /**
  * The toolset the host advertises to its LLM driver: one {@link AgentTool} per ENABLED capability that
@@ -108,10 +121,21 @@ export function agentToolset(registry: Registry): AgentTool[] {
 export function toolFor(def: CapabilityDef): AgentTool {
   return {
     name: def.id,
+    wireName: toolName(def.id),
     description: def.summary,
     inputSchema: mergeContextFields(def),
     risk: def.risk,
   };
+}
+
+/**
+ * Resolve a tool-call name to a capability id, accepting EITHER the dotted id (what an in-process driver uses)
+ * OR the `__` wire name (what a real Anthropic loop emits — a dotted name is invalid there). Capability ids
+ * never contain `__`, so an unknown dotted name maps to itself and falls through to a clean not_found; there is
+ * no ambiguity. This is what lets a host advertise `tool.wireName` and hand the model's reply straight back.
+ */
+function resolveId(registry: Registry, name: string): string {
+  return registry.has(name) ? name : capabilityId(name);
 }
 
 /**
@@ -134,14 +158,17 @@ export async function dispatchToolCall(
   call: ToolCall,
   opts: DispatchOpts,
 ): Promise<DispatchResult> {
+  const id = resolveId(registry, call.name);
   const { input, confirm, idempotencyKey } = splitContextFields(call.arguments);
   try {
-    const parts = await opts.contextFor(call.name);
+    const parts = await opts.contextFor(id);
     const ctx = contextFromParts(parts, { surface: "agent", confirm, idempotencyKey });
-    const output = await execute(registry, call.name, input, ctx);
+    const output = await execute(registry, id, input, ctx);
     return { output };
   } catch (err) {
-    if (err instanceof FacetError) return { errorCode: err.code };
+    if (err instanceof FacetError) {
+      return { errorCode: err.code, errorMessage: err.message, errorData: err.data };
+    }
     throw err;
   }
 }
@@ -169,12 +196,13 @@ export async function* streamToolCall<C = unknown, F = unknown>(
   call: ToolCall,
   opts: DispatchOpts,
 ): AsyncGenerator<C, F, void> {
+  const id = resolveId(registry, call.name);
   const { input, confirm, idempotencyKey } = splitContextFields(call.arguments);
-  const parts = await opts.contextFor(call.name);
+  const parts = await opts.contextFor(id);
   const ctx = contextFromParts(parts, { surface: "agent", confirm, idempotencyKey });
   // `yield*` re-yields every chunk the core produces and adopts the generator's RETURN as this generator's
   // return — so the chunks and the final both flow through unchanged, each already validated by the core.
-  return yield* executeStream<C, F>(registry, call.name, input, ctx);
+  return yield* executeStream<C, F>(registry, id, input, ctx);
 }
 
 /** One step of a scripted agent run: a tool call paired with the {@link DispatchResult} it produced. */

@@ -48,6 +48,14 @@ export interface AuthParts {
   actor: Actor;
   scopes: string[];
   ledger?: Ledger;
+  /**
+   * OPTIONAL typed claims about the caller — `{ workspaceId, role, … }` — distinct from the authz `scopes`.
+   * Carried onto `ctx.claims` by {@link contextFromParts}; the engine never reads it (it stays tenant-agnostic
+   * — this is NOT `ctx.tenant`). A typed home for "who, and in what tenant/role", so a handler reads
+   * `ctx.claims.workspaceId` rather than scanning stringly-typed scope prefixes. This is the sanctioned way to
+   * carry a tenant: declarative scopes still drive authz; `claims` carry the typed context.
+   */
+  claims?: Record<string, unknown>;
 }
 
 /**
@@ -64,6 +72,7 @@ export function contextFromParts(
     actor: parts.actor,
     scopes: parts.scopes,
     ledger: parts.ledger,
+    claims: parts.claims,
     surface: call.surface,
     confirm: call.confirm,
     idempotencyKey: call.idempotencyKey,
@@ -100,7 +109,7 @@ export function mergeContextFields(def: CapabilityDef): JsonSchema {
   if (def.risk !== "read") {
     properties[CONFIRM_FIELD] = {
       type: "boolean",
-      description: `Explicit confirmation for this ${def.risk} action. Call once without it to preview; you get confirmation_required, then re-call with ${CONFIRM_FIELD}: true to run.`,
+      description: `Explicit confirmation for this ${def.risk} action (required). Pass ${CONFIRM_FIELD}: false to preview — you get confirmation_required — then ${CONFIRM_FIELD}: true to run.`,
     };
     required.add(CONFIRM_FIELD);
     properties[IDEMPOTENCY_FIELD] = {
@@ -128,4 +137,25 @@ export function splitContextFields(args: Record<string, unknown> | undefined): C
     confirm: confirm === true,
     idempotencyKey: typeof key === "string" ? key : undefined,
   };
+}
+
+/**
+ * The wire-name mapping for a schema-advertising surface. Capability ids are dotted (`logs.tail`), but the
+ * Anthropic Messages API rejects a tool `name` containing a period (it must match `^[a-zA-Z0-9_-]{1,64}$`).
+ * So a real LLM driver — whether it goes over MCP (`@facet/mcp`) or drives the in-process agent surface
+ * (`@facet/agent`) against the live API — needs the dotted id mapped to `__` for the wire and back on
+ * dispatch. It lives HERE so neither schema-advertising surface re-derives it, and an agent-only host need not
+ * import `@facet/mcp` just for a string helper. The separator is two underscores, unambiguous against
+ * capability segments (single lowercase words, no underscores).
+ */
+const NAME_SEPARATOR = "__";
+
+/** A capability id → its Anthropic-regex-safe wire name (dots → `__`). */
+export function toolName(id: string): string {
+  return id.replaceAll(".", NAME_SEPARATOR);
+}
+
+/** A wire name → its capability id (the inverse of {@link toolName}: `__` → `.`). */
+export function capabilityId(name: string): string {
+  return name.replaceAll(NAME_SEPARATOR, ".");
 }

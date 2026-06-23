@@ -46,6 +46,14 @@ export interface Context {
    * replays a stored result instead of re-running the handler. Absent ⇒ dedup is simply skipped.
    */
   readonly ledger?: Ledger;
+  /**
+   * An OPTIONAL, host-set bag of typed claims about the caller — `{ workspaceId, role, … }` — distinct from
+   * the authz `scopes`. The engine NEVER reads it: it stays tenant-agnostic, and this is NOT a reincarnated
+   * `ctx.tenant`. It is a sanctioned, typed home for "who, and in what tenant/role", so a handler (or a host's
+   * own policy) reads `ctx.claims.workspaceId` instead of scanning stringly-typed scope prefixes. Set at
+   * `buildContext` time from the host's authenticator (see `AuthParts.claims` in `@facet/surface-kit`).
+   */
+  readonly claims?: Record<string, unknown>;
 
   /** Throws `ScopeError` if the scope is not granted. The host implements the policy. */
   requireScope(scope: string): void;

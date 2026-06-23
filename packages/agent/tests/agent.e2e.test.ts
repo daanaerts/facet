@@ -48,6 +48,10 @@ describe("the logs registry over the agent surface — propose→confirm with no
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual(["jobs.cancel", "jobs.list", "jobs.start", "logs.tail"]);
 
+    // wireName is the Anthropic-regex-safe form (dots → __), advertised to the real Messages API.
+    const wireNames = tools.map((t) => t.wireName).sort();
+    expect(wireNames).toEqual(["jobs__cancel", "jobs__list", "jobs__start", "logs__tail"]);
+
     // A read carries NO confirm field; a write/destructive carries a REQUIRED confirm field merged in.
     const tail = tools.find((t) => t.name === "logs.tail");
     expect(tail?.risk).toBe("read");
@@ -162,13 +166,35 @@ describe("the logs registry over the agent surface — propose→confirm with no
     expect(res.errorCode).toBe("forbidden");
   });
 
-  test("an unknown tool name → not_found", async () => {
+  test("an unknown tool name → not_found, carrying the message (F10)", async () => {
     const res = await dispatchToolCall(
       registry(),
       { name: "logs.nope", arguments: {} },
       { contextFor: contextFor() },
     );
     expect(res.errorCode).toBe("not_found");
+    expect(res.errorMessage).toContain("logs.nope");
+  });
+
+  test("dispatch accepts the WIRE name (real Anthropic loop) and surfaces the error MESSAGE", async () => {
+    const reg = registry();
+    // A real LLM emits the wire name `jobs__start` (dotted ids are invalid in the Messages API); dispatch
+    // maps it back to the capability id — the host needs no name glue.
+    const ok = await dispatchToolCall(
+      reg,
+      { name: "jobs__start", arguments: { name: "nightly", confirm: true } },
+      { contextFor: contextFor() },
+    );
+    expect(ok.output).toMatchObject({ name: "nightly", status: "running" });
+
+    // A refusal carries the MESSAGE, not just the code — what lets the model adapt (F10).
+    const denied = await dispatchToolCall(
+      reg,
+      { name: "jobs__start", arguments: { name: "x", confirm: true } },
+      { contextFor: () => ({ actor: { kind: "agent", agentId: "copilot" }, scopes: [] }) },
+    );
+    expect(denied.errorCode).toBe("forbidden");
+    expect(denied.errorMessage).toContain("scope");
   });
 
   test("idempotency: a retried jobs.start with the same key replays the first job", async () => {
