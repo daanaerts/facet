@@ -1,0 +1,13 @@
+{
+  "name": "@facet/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@facet/core": "workspace:*",
+    "zod": "^4.0.0"
+  }
+}

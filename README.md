@@ -28,17 +28,25 @@ tenants, roles, circles, or installs anywhere).
 |---|---|
 | Carved `@facet/core` (`defineCapability`, `execute`, registry, errors, ports) | ✅ |
 | Headless proof — the chokepoint runs an unrelated domain with a bare Context | ✅ `bun test` |
-| HTTP surface (one generic `POST /cap/:id`) | ⬜ next |
-| CLI / MCP / agent surfaces | ⬜ next |
-| Streaming as an agent-primary projection (`logs.tail`) | ⬜ the real design spike |
+| HTTP surface (one generic `POST /cap/:id` + a `/cap` catalogue) | ✅ branded `x-facet-*` headers; written once, generic over the registry |
+| CLI surface (`<cap.id> --json … --yes --key …`) | ✅ branded `--yes` / `--key` / `--actor` flags; in-process testable, exit-code leaf |
+| MCP surface (stdio server, one tool per capability) | ✅ dots→`__` wire names; `confirm`/`idempotencyKey` merged into each tool schema |
+| Agent surface (in-process toolset + `dispatchToolCall`) | ✅ the primary surface — no transport; same `confirmation_required` handshake |
+| Streaming as an agent-primary projection (`logs.tail` / `todos.watch`) | ✅ the design spike held — one streaming def → SSE / CLI lines / MCP progress / drain-to-final |
+| Playable to-do demo across all four surfaces | ✅ `examples/todo` — one capability set, zero per-surface code; cross-surface parity proven |
 
 ## Run it
 
 ```bash
-bun install
-bun test           # the extraction proof
+bun test           # every package + examples + the extraction proof (90 tests)
 bun run typecheck
+bun run lint
 ```
+
+Then **play** the full one-definition-many-surfaces demo (HTTP + CLI + MCP + agent, with streaming):
+see [`examples/todo/README.md`](examples/todo/README.md) for literal, copy-paste commands —
+`bun run examples/todo/serve.ts` and curl a `todos.add` / `todos.list` / the `todos.watch` SSE stream,
+the same via `bun run examples/todo/cli.ts`, and the stdio MCP server via `bun run examples/todo/mcp.ts`.
 
 ## The two primitives (unchanged from the pitch)
 
@@ -68,19 +76,34 @@ drifted host-ward. The extraction is mostly subtraction, which is the encouragin
 typed error taxonomy `facet.md` files under "open questions" already exists and ported essentially
 unchanged — see `packages/core/src/errors.ts`.)
 
-What is **not yet proven**: that the *surfaces* project cleanly without the spine (only the headless core
-is exercised so far), and that **streaming** survives the one-definition-many-surfaces promise. Those are
-the next steps, and streaming is the one most likely to find the leak.
+**Now also proven (the second half of the bet):** all four surfaces project cleanly *without the spine*,
+and **streaming survived** the one-definition-many-surfaces promise — the part most likely to find the
+leak. Each surface (`@facet/http`, `@facet/cli`, `@facet/mcp`, `@facet/agent`) is written **once, generic
+over the registry**; its only job is to establish a `Context` via a host authenticator and translate
+errors — it validates nothing and authorizes nothing (that all stays in `execute()`), and the surfaces
+share nothing but `@facet/core`. A single streaming definition (`logs.follow`, `todos.watch`) projects to
+SSE over HTTP, one-JSON-line-per-chunk on the CLI, MCP progress notifications, and a plain drain-to-final
+for non-streaming clients — no per-surface streaming code. The `examples/todo` app exercises the whole
+thing end to end and its parity test asserts `todos.add` returns the **same** output and refuses with the
+**same** `confirmation_required` code across HTTP, CLI, MCP, and the agent. No surface had to reach back
+for an MF concept. The carve holds.
 
 ## Layout
 
 ```
 packages/core/          @facet/core — the carved engine (no MF concepts)
-examples/logs/          an unrelated domain: logs + jobs
+packages/http/          @facet/http — one generic POST /cap/:id + /cap catalogue (SSE for streaming)
+packages/cli/           @facet/cli — one generic `<cap.id> --json … --yes --key …` runner
+packages/mcp/           @facet/mcp — one generic stdio server, one tool per capability
+packages/agent/         @facet/agent — the primary surface: in-process toolset + dispatchToolCall
+packages/parity/        @facet/parity — normalized surface drivers for the cross-surface parity proof
+examples/logs/          an unrelated domain: logs + jobs (+ the four surface entrypoints)
   store.ts              in-memory domain state (the framework knows nothing about it)
   host.ts               the host's whole contribution: makeContext() + a MemoryLedger (~40 lines)
-  capabilities/*.cap.ts logs.tail (read), jobs.list (read), jobs.start (write), jobs.cancel (destructive)
+  capabilities/*.cap.ts logs.tail / logs.follow (reads), jobs.list (read), jobs.start (write), jobs.cancel (destructive)
+examples/todo/          the playable to-do app on all four surfaces (its own README + serve/cli/mcp entrypoints)
 tests/headless.test.ts  the extraction proof
+tests/streaming.test.ts the streaming proof (one definition → every surface)
 ```
 
 Carved from the Moral Fabric v2 spike (`../apps-demo`).

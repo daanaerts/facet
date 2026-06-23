@@ -16,7 +16,12 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@facet/core": ["./packages/core/src/index.ts"]
+      "@facet/core": ["./packages/core/src/index.ts"],
+      "@facet/http": ["./packages/http/src/index.ts"],
+      "@facet/cli": ["./packages/cli/src/index.ts"],
+      "@facet/mcp": ["./packages/mcp/src/index.ts"],
+      "@facet/agent": ["./packages/agent/src/index.ts"],
+      "@facet/parity": ["./packages/parity/src/index.ts"]
     }
   },
   "include": ["packages/*/src", "examples", "tests"]

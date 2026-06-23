@@ -13,7 +13,12 @@
     "lint:fix": "biome check --write ."
   },
   "dependencies": {
+    "@facet/agent": "workspace:*",
+    "@facet/cli": "workspace:*",
     "@facet/core": "workspace:*",
+    "@facet/http": "workspace:*",
+    "@facet/mcp": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

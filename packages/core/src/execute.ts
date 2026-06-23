@@ -6,6 +6,7 @@ import {
   NotFoundError,
   ValidationError,
 } from "./errors";
+import { drainStream } from "./execute-stream";
 import type { Registry } from "./registry";
 
 /**
@@ -35,6 +36,13 @@ export async function execute<O = unknown>(
   const def = registry.get(id);
   if (!def) throw new NotFoundError(`capability not found: ${id}`, { id });
   if (!def.enabled) throw new KillSwitchError(id);
+
+  // 1a. STREAMING (additive): a streaming capability has an async-generator handler, not a unary one. A
+  //     caller that does not stream still gets its terminal value here — `drainStream` runs the very same
+  //     gates (resolve, validate, authz, audit) and per-chunk/final validation as `executeStream`, then
+  //     discards the chunks and returns the validated final. Streaming caps are reads, so none of the
+  //     confirmation / idempotency steps below apply, which is exactly why we delegate before reaching them.
+  if (def.stream) return drainStream<O>(registry, id, rawInput, ctx);
 
   // 2. validate input against the capability's own schema — the surface never validates
   const parsed = def.input.safeParse(rawInput);

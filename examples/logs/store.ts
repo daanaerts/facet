@@ -31,6 +31,10 @@ export const store = {
   tail(source: string, limit: number): string[] {
     return (logs.get(source) ?? []).slice(-limit);
   },
+  /** Every line currently held for a source, oldest-first — what a streaming `follow` walks over. */
+  lines(source: string): string[] {
+    return [...(logs.get(source) ?? [])];
+  },
   listJobs(): Job[] {
     return [...jobs.values()];
   },
