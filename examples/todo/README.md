@@ -19,9 +19,11 @@ repo root (`/Users/daan/workspace/mf/facet`).
 | `todos.remove` | destructive | `{ id }` | `{ id, removed: true }` (404 if absent) |
 | `todos.watch` | read (**streaming**) | `{ done? }` | one chunk per todo, then `{ count }` |
 
-A `read` auto-runs on every surface. A `write`/`destructive` is **confirmation-gated** by the chokepoint:
-call it once without confirmation to get a `confirmation_required` refusal (the propose step), then re-call
-with confirmation (the [Yes]). The gate lives in `execute()` — no surface re-implements it.
+A `read` auto-runs on every surface. A `write`/`destructive` is **confirmation-gated** by the chokepoint —
+but each surface *asserts* confirmation in its own idiom (a GUI's button / a CLI's `--yes` / an agent's
+propose→confirm two-step); the gate itself lives in `execute()`, so no surface re-implements it.
+`confirmation_required` is the engine's **safety net**, not a round-trip a human performs — see
+[`docs/CONFIRMATION.md`](../../docs/CONFIRMATION.md).
 
 The store seeds two todos (`todo_1` "buy milk", `todo_2` "write the README") so there is something to poke
 at immediately. Each entrypoint has its own fresh in-memory store.
@@ -50,7 +52,8 @@ curl localhost:3002/cap/todos.add          # one capability's entry (id, risk, i
 curl -X POST localhost:3002/cap/todos.list -H 'content-type: application/json' -d '{}'
 curl -X POST localhost:3002/cap/todos.list -H 'content-type: application/json' -d '{"done":false}'
 
-# write WITHOUT confirmation → 409 confirmation_required (the propose step)
+# write WITHOUT the confirm header → 409 confirmation_required (the gate; a GUI/client sends the header WITH
+# the action — confirmation_required is the safety net, not a step a human performs. See docs/CONFIRMATION.md)
 curl -i -X POST localhost:3002/cap/todos.add -H 'content-type: application/json' -d '{"title":"ship it"}'
 
 # write WITH the confirm header → runs, returns the created todo (todo_3)

@@ -86,10 +86,21 @@ function card(cap) {
     let input;
     try { input = readForm(form, props); }
     catch (err) { return line(out, "bad input JSON: " + err.message, "err"); }
+
+    // The GUI ASSERTS confirm from user intent — it does NOT round-trip through confirmation_required (that
+    // submit → "please confirm" → submit-again dance is the AGENT idiom, wrong for a human). A read just runs;
+    // a write's Run click IS the confirmation; a DESTRUCTIVE action gets a client-side "are you sure?", gated
+    // on the risk the catalogue already advertises. We send x-facet-confirm:true with the action itself.
+    if (cap.risk === "destructive" &&
+        !window.confirm(`Destructive action — ${cap.id}. This cannot be undone. Proceed?`)) {
+      return line(out, "cancelled", "chunk");
+    }
+    const confirm = cap.risk !== "read"; // writes + destructive assert confirm; reads never gate.
+
     runBtn.disabled = true;
     try {
       if (cap.stream) await runStream(cap.id, input, out);
-      else await runUnary(cap, input, out);
+      else await runUnary(cap, input, out, confirm);
     } finally { runBtn.disabled = false; }
   });
 
@@ -136,26 +147,15 @@ function readForm(form, props) {
   return input;
 }
 
-// Unary call with the propose→confirm handshake modelled in the UI exactly as the schema models it:
-// a write/destructive runs once WITHOUT confirm, and only on `confirmation_required` do we reveal Confirm.
-async function runUnary(cap, input, out, confirm = false) {
+// Unary call. The caller has ALREADY asserted confirm from user intent (see the submit handler) and passes it
+// here — the GUI never performs the propose→confirm round-trip (that's the agent idiom). A confirmation_required
+// response is therefore the engine's SAFETY NET (a surface that failed to assert intent), shown as an error.
+async function runUnary(cap, input, out, confirm) {
   const headers = { "content-type": "application/json" };
   if (confirm) headers["x-facet-confirm"] = "true";
   const res = await fetch(`/cap/${cap.id}`, { method: "POST", headers, body: JSON.stringify(input) });
   const body = await res.json();
-  if (res.ok) return block(out, body, "ok");
-  if (body.code === "confirmation_required" && !confirm) return proposeConfirm(cap, input, out);
-  block(out, body, "err");
-}
-
-function proposeConfirm(cap, input, out) {
-  out.replaceChildren();
-  const btn = $("button", { className: "warn", textContent: `Confirm & run (${cap.risk})` });
-  btn.addEventListener("click", () => { out.replaceChildren(); runUnary(cap, input, out, true); });
-  out.append($("div", { className: "confirm" }, [
-    $("div", { className: "note", textContent: `This ${cap.risk} action is gated by the chokepoint — the server replied confirmation_required.` }),
-    $("div", { className: "row" }, btn),
-  ]));
+  block(out, body, res.ok ? "ok" : "err");
 }
 
 // Streaming over fetch (EventSource can't POST): read the SSE body, render each chunk live, then result/error.
