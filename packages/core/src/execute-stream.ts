@@ -119,3 +119,27 @@ export async function drainStream<F = unknown>(
   while (!step.done) step = await gen.next();
   return step.value;
 }
+
+/**
+ * Collect a streaming capability's generator into `{ chunks, final }` — the chunks in order PLUS the terminal
+ * return value `F`. This exists because `executeStream` returns `AsyncGenerator<C, F>`, and a plain
+ * `for await (const chunk of gen) { … }` SILENTLY DROPS the final `F` — the loop only ever sees the yielded
+ * chunks, never the generator's return. Three of ten dogfood apps shipped a wrong first implementation for
+ * exactly that reason. This is the one obvious, dependency-free way to drive the generator to completion and
+ * keep BOTH halves: drive `.next()` by hand (the only API that exposes the return) and stop on `done`.
+ *
+ * It is a pure consumer of any `AsyncGenerator<C, F>` — it runs no gates and validates nothing (the core
+ * already did, on the way out of `executeStream`). A mid-stream throw propagates unchanged: the K good chunks
+ * are lost with the throw, exactly as the streaming contract specifies (the caller catches the `FacetError`).
+ */
+export async function collectStream<C = unknown, F = unknown>(
+  gen: AsyncGenerator<C, F, void>,
+): Promise<{ chunks: C[]; final: F }> {
+  const chunks: C[] = [];
+  let step = await gen.next();
+  while (!step.done) {
+    chunks.push(step.value);
+    step = await gen.next();
+  }
+  return { chunks, final: step.value };
+}

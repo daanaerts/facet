@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { agentToolset, dispatchToolCall } from "@facet/agent";
 import { runCli, type WriterSink } from "@facet/cli";
 import { defineCapability, Registry } from "@facet/core";
-import { createHttpApp } from "@facet/http";
+import { createHttpApp } from "@facet/http/elysia";
 import { createMcpServer, mcpTools, toolName } from "@facet/mcp";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";

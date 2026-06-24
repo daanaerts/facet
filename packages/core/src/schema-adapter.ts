@@ -55,6 +55,10 @@ let activeAdapter: SchemaAdapter = zodSchemaAdapter;
  * Swap the projection adapter (process-wide). Call once at startup if you author capabilities with a non-Zod
  * StandardSchema library and want the surfaces to advertise a precise JSON Schema for them. Validation is
  * unaffected — it always runs through the schema's own `~standard.validate`, never through this seam.
+ *
+ * NOTE: this sets PROCESS-GLOBAL state and is intended to be called ONCE at boot. The active adapter is a
+ * single module-level value, so two registries living in the same process cannot use different projectors —
+ * the last call wins for everyone. This is a deliberate boot-time-only global, not per-registry config.
  */
 export function setSchemaAdapter(adapter: SchemaAdapter): void {
   activeAdapter = adapter;

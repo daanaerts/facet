@@ -39,6 +39,18 @@ const SURFACE_DIRS = [
   "packages/agent/src",
 ] as const;
 
+/**
+ * The dirs the FORBIDDEN scan covers: the four surfaces PLUS `@facet/surface-kit`. surface-kit sits one layer
+ * BELOW the surfaces — it owns the mechanism the schema-advertising surfaces share (host-seam → Context,
+ * `mergeContextFields`/`splitContextFields`) — so it must obey the SAME negative property: it re-implements
+ * none of the chokepoint's work (no validation, no authz, no handler invocation). It is allowed the identical
+ * read-only projection the surfaces are (`toJsonSchema(def.input)` to build an advertised schema) and nothing
+ * more. It is NOT in {@link SURFACE_DIRS} because it deliberately does NOT call `execute()`/`executeStream()`
+ * itself (that is the surface's job, with surface-kit's Context); the chokepoint-routing test below stays
+ * scoped to the actual surfaces.
+ */
+const PURITY_DIRS = [...SURFACE_DIRS, "packages/surface-kit/src"] as const;
+
 /** The chokepoint's own work — forbidden in any surface. Each pattern is a thing only the core may do. */
 const FORBIDDEN: { rx: RegExp; why: string }[] = [
   {
@@ -89,7 +101,7 @@ interface Violation {
 describe("surface purity — no surface re-implements the chokepoint", () => {
   test("no validation / authz / handler-invocation in any surface package", async () => {
     const violations: Violation[] = [];
-    for (const dir of SURFACE_DIRS) {
+    for (const dir of PURITY_DIRS) {
       for (const file of await filesUnder(dir)) {
         const lines = stripComments(await Bun.file(file).text()).split("\n");
         lines.forEach((line, i) => {

@@ -6,5 +6,4 @@
  * The surface validates nothing and authorizes nothing — all of that lives in `@facet/core` `execute()`.
  * It shares nothing with the other surfaces but `@facet/core`. See {@link runCli}.
  */
-export { flagString, type ParsedArgs, parseArgs } from "./args";
 export { EXIT, FLAG, type RunCliOpts, runCli, type WriterSink } from "./run";

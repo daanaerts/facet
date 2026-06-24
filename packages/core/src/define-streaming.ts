@@ -1,5 +1,6 @@
-import type { CapabilityDef } from "./capability";
+import type { CapabilityDef, CapabilityExample } from "./capability";
 import type { Context } from "./context";
+import { FacetError } from "./errors";
 import type { StandardSchemaV1 } from "./standard-schema";
 import type { SurfaceKind } from "./surface";
 import { SURFACES } from "./surface";
@@ -28,6 +29,10 @@ export interface StreamingCapabilitySpec<
 > {
   id: string;
   summary: string;
+  /** OPTIONAL long-form help body, distinct from the one-line `summary`. Rendered by every surface's help. */
+  description?: string;
+  /** OPTIONAL worked examples — each a (typed) input payload + optional note. Rendered into every surface's help. */
+  examples?: Array<{ input: StandardSchemaV1.InferInput<I>; note?: string }>;
   input: I;
   /** The schema for ONE incremental chunk; validated on every yield. */
   chunk: C;
@@ -58,6 +63,10 @@ export interface StreamingCapabilitySpec<
  * the `chunk` schema, and the generator under `streamHandler` — and `risk` pinned to `"read"`. Its unary
  * `handler` is synthesized to DRAIN the generator to the final, so the non-streaming `handler` contract still
  * holds even though `execute()` routes streaming capabilities through `drainStream` before ever calling it.
+ *
+ * DELIBERATE LIMIT: `risk` is pinned to `"read"` here with no way to override it, so a streaming WRITE is
+ * intentionally inexpressible — streaming is a read idiom, and a write that needs confirmation/idempotency
+ * belongs in `defineCapability`. This is a designed constraint, not an oversight.
  */
 export function defineStreamingCapability<
   I extends StandardSchemaV1,
@@ -65,8 +74,11 @@ export function defineStreamingCapability<
   O extends StandardSchemaV1,
 >(spec: StreamingCapabilitySpec<I, C, O>): CapabilityDef {
   if (!ID_RE.test(spec.id)) {
-    throw new Error(
+    throw new FacetError(
+      "validation",
       `invalid capability id "${spec.id}" — expected dotted lowercase like "logs.follow"`,
+      400,
+      { id: spec.id },
     );
   }
 
@@ -75,6 +87,9 @@ export function defineStreamingCapability<
   return {
     id: spec.id,
     summary: spec.summary,
+    // Documentation-only, carried through verbatim — exactly as `defineCapability` does.
+    description: spec.description,
+    examples: spec.examples as CapabilityExample[] | undefined,
     input: spec.input,
     output: spec.output,
     scopes: spec.scopes ?? [],

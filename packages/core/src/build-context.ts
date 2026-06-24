@@ -26,6 +26,14 @@ export interface BuildContextOpts {
    * engine never reads it; it is a typed home for tenancy/role so a handler need not scan `scopes` strings.
    */
   claims?: Record<string, unknown>;
+  /**
+   * Optional host-supplied port for reaching external systems (a vault-backed API client, an email / issue
+   * connector, …), resolved by id. The symmetric sibling of `ledger`: the engine NEVER calls it — a handler
+   * does, via `ctx.connector?.<T>("email")` — but, like `ledger`, the HOST supplies it, so it can be bound to
+   * the caller (a per-actor / per-tenant client). A handler that needs a connector it wasn't given throws
+   * `ConnectorUnavailableError`.
+   */
+  connector?: <T>(id: string) => T;
   /** Optional audit sink; defaults to a no-op so a surface need not supply one. */
   audit?: (event: string, data?: unknown) => void;
 }
@@ -54,6 +62,7 @@ export function buildContext(opts: BuildContextOpts): Context {
     idempotencyKey: opts.idempotencyKey,
     ledger: opts.ledger,
     claims: opts.claims,
+    connector: opts.connector,
     requireScope(scope: string): void {
       if (!scopes.includes(scope) && !scopes.includes("*")) throw new ScopeError(scope);
     },

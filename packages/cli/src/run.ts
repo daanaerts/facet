@@ -1,4 +1,13 @@
-import { type Actor, execute, executeStream, FacetError, type Registry } from "@facet/core";
+import {
+  type Actor,
+  type CapabilityDoc,
+  describeCapability,
+  execute,
+  executeStream,
+  FacetError,
+  type FieldDoc,
+  type Registry,
+} from "@facet/core";
 import { type AuthParts, contextFromParts } from "@facet/surface-kit";
 import { flagString, parseArgs } from "./args";
 
@@ -72,6 +81,7 @@ const HELP = `facet — capability CLI (one definition, projected onto the comma
 
 Usage
   facet <capability.id> [--json '<input>'] [--yes] [--key <k>] [--actor <email>]
+  facet <capability.id> --help            show a capability's input/output, scopes, and examples
   facet ls [--surface http|cli|mcp|agent]
   facet help
 
@@ -116,6 +126,80 @@ function runLs(
   return EXIT.ok;
 }
 
+/** The requiredness/default qualifier shown for an input field: `default: X`, `required`, or `optional`. */
+function qualifierOf(f: FieldDoc): string {
+  if (f.default !== undefined) return `default: ${JSON.stringify(f.default)}`;
+  return f.required ? "required" : "optional";
+}
+
+/**
+ * Render aligned field rows. Input rows carry the requiredness/default qualifier; output rows drop it.
+ * Columns are padded to the widest entry so the descriptions line up. Callers guard `fields.length > 0`.
+ */
+function fieldRows(fields: FieldDoc[], withQualifier: boolean): string[] {
+  const nameW = Math.max(...fields.map((f) => f.name.length));
+  const typeW = Math.max(...fields.map((f) => f.type.length));
+  const qualW = withQualifier ? Math.max(...fields.map((f) => qualifierOf(f).length)) : 0;
+  return fields.map((f) => {
+    const parts = [f.name.padEnd(nameW), f.type.padEnd(typeW)];
+    if (withQualifier) parts.push(qualifierOf(f).padEnd(qualW));
+    const head = parts.join("  ");
+    return f.description ? `${head}  ${f.description}` : head.trimEnd();
+  });
+}
+
+/**
+ * Render a {@link CapabilityDoc} as a terminal man page — the CLI's projection of the shared help model.
+ * Title + summary, a meta line (threat model, reversibility, streaming, surfaces, scopes), the optional
+ * long-form `description`, a usage line, the input/output fields, and the authored examples. Everything is
+ * derived from the capability's own schema + spec, so a new `*.cap.ts` is self-documenting on `--help` the
+ * moment it lands — there is no per-capability help to hand-maintain.
+ */
+function renderCapabilityHelp(doc: CapabilityDoc): string {
+  const lines: string[] = [`${doc.id} — ${doc.summary}`];
+
+  const meta: string[] = [doc.risk];
+  if (doc.reversible === true) meta.push("reversible");
+  if (doc.reversible === false) meta.push("permanent");
+  if (doc.stream) meta.push("streams");
+  meta.push(`surfaces: ${doc.surfaces.join(", ")}`);
+  if (doc.scopes.length > 0) meta.push(`scopes: ${doc.scopes.join(", ")}`);
+  lines.push(`  ${meta.join(" · ")}`);
+
+  if (doc.risk !== "read") {
+    lines.push(
+      "",
+      `  Requires --yes — ${doc.risk} actions are confirmation-gated by the chokepoint.`,
+    );
+  }
+
+  if (doc.description) lines.push("", doc.description.trim());
+
+  const jsonArg = doc.input.length > 0 ? " --json '<input>'" : "";
+  const yesArg = doc.risk !== "read" ? " --yes" : "";
+  lines.push("", "Usage", `  facet ${doc.id}${jsonArg}${yesArg}`);
+
+  if (doc.input.length > 0) {
+    lines.push("", "Input");
+    for (const row of fieldRows(doc.input, true)) lines.push(`  ${row}`);
+  }
+
+  if (doc.output.length > 0) {
+    lines.push("", doc.stream ? "Output (final)" : "Output");
+    for (const row of fieldRows(doc.output, false)) lines.push(`  ${row}`);
+  }
+
+  if (doc.examples.length > 0) {
+    lines.push("", "Examples");
+    for (const ex of doc.examples) {
+      lines.push(`  facet ${doc.id} --json '${JSON.stringify(ex.input)}'${yesArg}`);
+      if (ex.note) lines.push(`      ${ex.note}`);
+    }
+  }
+
+  return lines.join("\n");
+}
+
 /**
  * Run one capability through the chokepoint. Parses `--json` into the input (a bad parse is a usage error,
  * exit 2, BEFORE any Context is formed), refuses an unknown id with exit 2, then asks the host for a Context
@@ -130,6 +214,20 @@ async function runCapability(
   opts: RunCliOpts,
   sink: WriterSink,
 ): Promise<number> {
+  // `facet <id> --help` — render THIS capability's man page from its schema and stop, before any Context is
+  // formed (help authorizes nothing). It is generated, not hand-written: `describeCapability` flattens the
+  // same input/output schema `execute()` enforces, so the help can never drift from the contract. An unknown
+  // id is the same usage error (exit 2) a real call would hit.
+  if (flags.help === true) {
+    const def = registry.get(id);
+    if (!def) {
+      sink.err(`unknown capability: ${id}\nrun 'facet ls' to list capabilities`);
+      return EXIT.usage;
+    }
+    sink.out(renderCapabilityHelp(describeCapability(def)));
+    return EXIT.ok;
+  }
+
   // Parse `--json` first: an invalid payload is a usage error before the chokepoint, never a 500.
   let input: unknown = {};
   const json = flagString(flags, FLAG.json);
@@ -216,7 +314,10 @@ export async function runCli(
   const { positionals, flags } = parseArgs(argv);
   const cmd = positionals[0];
 
-  if (!cmd || cmd === "help" || flags.help === true) {
+  // The GLOBAL help: no command, or an explicit `help` / bare `--help`. A capability-scoped `--help`
+  // (`facet logs.tail --help`) is NOT global — it carries a `cmd`, so it falls through to `runCapability`,
+  // which renders that one capability's man page from its schema.
+  if (!cmd || cmd === "help") {
     sink.out(HELP);
     return EXIT.ok;
   }

@@ -159,6 +159,47 @@ describe("the logs registry over the CLI — one generic dispatcher", () => {
     const help = await run(["help"]);
     expect(help.code).toBe(EXIT.ok);
     expect(help.out.join("\n")).toContain("Usage");
+    // the global help advertises the per-capability `--help`
+    expect(help.out.join("\n")).toContain("<capability.id> --help");
+  });
+
+  test("`<id> --help` renders a read's man page from its schema (summary, fields, defaults, examples)", async () => {
+    const { code, out } = await run(["logs.tail", "--help"]);
+    expect(code).toBe(EXIT.ok);
+    const text = out.join("\n");
+    // title + summary, and the meta line carries the threat model + scopes (not a global usage dump)
+    expect(text).toContain("logs.tail — Return the most recent log lines for a source.");
+    expect(text).toContain("read · surfaces: agent, http, mcp, cli · scopes: logs:read");
+    // the long-form description body
+    expect(text).toContain("Reads the trailing window of a log source");
+    // input fields with their `.describe()` text and the default pulled from the schema
+    expect(text).toContain("Input");
+    expect(text).toContain("source");
+    expect(text).toContain("The log source");
+    expect(text).toContain("default: 50");
+    // authored examples are rendered as runnable commands + notes
+    expect(text).toContain(`facet logs.tail --json '{"source":"build"}'`);
+    expect(text).toContain("A wider window for a deploy postmortem.");
+  });
+
+  test("`<id> --help` for a write surfaces the confirmation gate and puts --yes in the example", async () => {
+    const { code, out } = await run(["jobs.start", "--help"]);
+    expect(code).toBe(EXIT.ok);
+    const text = out.join("\n");
+    expect(text).toContain("write · surfaces:");
+    expect(text).toContain("Requires --yes");
+    // the runnable example for a write carries --yes so a copy-paste actually runs
+    expect(text).toContain(`facet jobs.start --json '{"name":"nightly"}' --yes`);
+    // an enum output field renders its allowed values, not just "string"
+    expect(text).toContain(`"running"|"done"|"cancelled"`);
+    // help authorizes nothing and runs nothing — no job was started
+    expect(store.listJobs()).toHaveLength(0);
+  });
+
+  test("`<unknown> --help` is the same usage error (exit 2) a real call would hit", async () => {
+    const { code, err } = await run(["logs.nope", "--help"]);
+    expect(code).toBe(EXIT.usage);
+    expect(err.join("\n")).toContain("unknown capability: logs.nope");
   });
 
   test("--actor sets the calling identity the host seam authorizes", async () => {

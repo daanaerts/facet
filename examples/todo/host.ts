@@ -1,5 +1,5 @@
 import type { Actor, Ledger } from "@facet/core";
-import type { Headers } from "@facet/http";
+import type { HeaderRecord } from "@facet/http";
 import type { ToolContext } from "@facet/mcp";
 import type { AuthParts } from "@facet/surface-kit";
 
@@ -64,9 +64,9 @@ export class MemoryLedger implements Ledger {
  * The ledger lives here, not per request. (An optional `x-facet-actor` override is deliberately NOT honoured
  * — a dev seam should not let a header assert identity.)
  */
-export function devAuthenticate(): (headers: Headers) => AuthParts {
+export function devAuthenticate(): (headers: HeaderRecord) => AuthParts {
   const ledger = new MemoryLedger();
-  return (_headers: Headers): AuthParts => ({
+  return (_headers: HeaderRecord): AuthParts => ({
     actor: DEV_ACTOR,
     scopes: DEV_SCOPES,
     ledger,

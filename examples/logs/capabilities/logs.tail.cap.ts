@@ -12,6 +12,14 @@ import { store } from "../store";
 export default defineCapability({
   id: "logs.tail",
   summary: "Return the most recent log lines for a source.",
+  description:
+    "Reads the trailing window of a log source and returns it as a flat array of lines, newest last. A\n" +
+    "read: it auto-runs on every surface with no confirmation. Bound by `limit` (1–1000, default 50) so a\n" +
+    "single call can never pull an unbounded log into memory.",
+  examples: [
+    { input: { source: "build" }, note: "Last 50 lines of the build log." },
+    { input: { source: "deploy", limit: 200 }, note: "A wider window for a deploy postmortem." },
+  ],
   input: z.object({
     source: z.string().min(1).describe('The log source, e.g. "build", "deploy", or a job id.'),
     limit: z.number().int().min(1).max(1000).default(50).describe("How many trailing lines."),

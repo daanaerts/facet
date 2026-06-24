@@ -12,6 +12,19 @@ import type { SurfaceKind } from "./surface";
 export type Risk = "read" | "write" | "destructive";
 
 /**
+ * One worked example for a capability — an input payload plus an optional note. Examples are authored ONCE on
+ * the spec (typed against the input schema) and rendered into every surface's help: the CLI `--help`, and the
+ * MCP / HTTP describe payloads that reuse {@link describeCapability}. The `input` is the shape a caller SENDS
+ * (pre-parse — defaults may be omitted), so an example is a literal payload a reader can copy into a call.
+ */
+export interface CapabilityExample {
+  /** A worked input payload — the shape a caller sends (pre-parse). */
+  input: unknown;
+  /** Optional one-line note explaining what the example demonstrates. */
+  note?: string;
+}
+
+/**
  * A typed, headless use-case: the single source of truth from which every surface is projected. Stored in
  * the registry with its schemas erased to `StandardSchemaV1`; `defineCapability` preserves full inference for
  * authors. The schemas are held as the validation CONTRACT (Standard Schema) — `execute()` validates through
@@ -25,10 +38,33 @@ export type Risk = "read" | "write" | "destructive";
 export interface CapabilityDef {
   id: string;
   summary: string;
+  /**
+   * LONG-FORM help body (OPTIONAL), distinct from the one-line `summary`. `summary` is the tool-list blurb
+   * (the MCP/agent tool `description`, the `facet ls` row); `description` is the multi-paragraph man-page body
+   * rendered by `facet <id> --help` (and available to the MCP/HTTP describe payloads). Absent when not
+   * declared — surfaces fall back to `summary` alone.
+   */
+  description?: string;
+  /**
+   * EXAMPLES (OPTIONAL) — worked input payloads, authored once and rendered into every surface's help via
+   * {@link describeCapability}. Empty/absent when not declared; the engine attaches no semantics to them (they
+   * are documentation, never executed by the core).
+   */
+  examples?: CapabilityExample[];
   input: StandardSchemaV1;
   output: StandardSchemaV1;
   scopes: string[];
   risk: Risk;
+  /**
+   * REVERSIBILITY (additive, OPTIONAL). `risk` alone cannot separate a recoverable destructive action
+   * (archive-to-trash, capture-then-refund) from a permanent one (hard delete, merge) — eight of ten dogfood
+   * apps wanted the distinction. `reversible: true` marks an effect that can be undone, `false` one that is
+   * permanent, and `undefined` (the default) leaves it UNSPECIFIED — the engine attaches no semantics to it
+   * either way (it gates nothing on it, exactly as it does nothing extra for `risk`). It is surfaced wherever
+   * `risk` already is — the HTTP `/cap` entry, the MCP tool annotations, the agent toolset — so a surface or
+   * agent can calibrate its confirmation copy ("move to trash" vs "permanently delete") from the contract.
+   */
+  reversible?: boolean;
   /** Read ⇒ always true. Writes opt in (deduped by business identity). */
   idempotent: boolean;
   surfaces: SurfaceKind[];

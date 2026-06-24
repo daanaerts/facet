@@ -10,6 +10,15 @@ import {
 } from "@facet/core";
 
 /**
+ * Re-export the typed claim accessors (`claimOf` / `requireClaim`) from the host-seam kit. A host already
+ * imports `@facet/surface-kit` to wire `AuthParts.claims` into a Context (see {@link AuthParts}); re-exporting
+ * the READ side here means it pulls the tenant back out — `requireClaim<string>(ctx, "workspaceId")` — without
+ * also reaching into `@facet/core`. The implementation lives in core (the engine owns `Context`); this is only
+ * a convenience surface so the write side (`AuthParts.claims`) and the read side sit in one import.
+ */
+export { claimOf, requireClaim } from "@facet/core";
+
+/**
  * @facet/surface-kit — the mechanics every surface shares, factored out of the surfaces themselves.
  *
  * A surface stays a pure projection (it validates and authorizes nothing — see the surface-purity tripwire),
@@ -56,6 +65,13 @@ export interface AuthParts {
    * carry a tenant: declarative scopes still drive authz; `claims` carry the typed context.
    */
   claims?: Record<string, unknown>;
+  /**
+   * OPTIONAL host-supplied port for reaching external systems (a vault-backed client, an email / issue
+   * connector), resolved by id. Carried onto `ctx.connector` by {@link contextFromParts} — the symmetric
+   * sibling of `ledger`, so a host can hand handlers a connector bound to THIS caller. The engine never calls
+   * it; a handler does, throwing `ConnectorUnavailableError` if it needs one it wasn't given.
+   */
+  connector?: <T>(id: string) => T;
 }
 
 /**
@@ -73,6 +89,7 @@ export function contextFromParts(
     scopes: parts.scopes,
     ledger: parts.ledger,
     claims: parts.claims,
+    connector: parts.connector,
     surface: call.surface,
     confirm: call.confirm,
     idempotencyKey: call.idempotencyKey,

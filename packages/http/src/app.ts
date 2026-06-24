@@ -47,5 +47,5 @@ export {
   type CreateFetchHandlerOpts,
   createFetchHandler,
   HEADER,
-  type Headers,
+  type HeaderRecord,
 } from "./fetch-handler";

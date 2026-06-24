@@ -105,6 +105,28 @@ describe("@facet/mcp — the registry projected onto MCP, spine-free", () => {
     await client.close();
   });
 
+  test("a tool's description is the MCP --help: summary + long-form description + worked examples", async () => {
+    const client = await connect(createMcpServer(logsRegistry(), { contextFor: contextFor() }));
+    const { tools } = await client.listTools();
+
+    // A read: summary leads, the long-form description follows, and the authored examples are rendered as
+    // copy-able tool-call args (a read needs no confirm).
+    const read = tools.find((t) => t.name === toolName("logs.tail"));
+    expect(read?.description).toContain("Return the most recent log lines for a source.");
+    expect(read?.description).toContain("Reads the trailing window of a log source");
+    expect(read?.description).toContain("Examples:");
+    expect(read?.description).toContain(`{"source":"build"}`);
+
+    // A write: its example carries `confirm: true`, so a model can copy it verbatim into a valid tool call —
+    // the MCP mirror of the CLI appending `--yes`.
+    const write = tools.find((t) => t.name === toolName("jobs.start"));
+    expect(write?.description).toContain("Start a background job.");
+    expect(write?.description).toContain("the chokepoint gates it");
+    expect(write?.description).toContain(`{"name":"nightly","confirm":true}`);
+
+    await client.close();
+  });
+
   test("a write tool surfaces confirm (required) and idempotencyKey (optional); a read carries neither", async () => {
     const client = await connect(createMcpServer(logsRegistry(), { contextFor: contextFor() }));
     const { tools } = await client.listTools();

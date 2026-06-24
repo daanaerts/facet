@@ -12,8 +12,13 @@ export {
   createMcpServer,
   dispatchTool,
   type McpOptions,
+  /**
+   * @internal Not part of the public surface. Kept exported only because the cross-surface
+   * surprise-capability test (`tests/surprise-capability.test.ts`) asserts the projected tool set;
+   * hosts use {@link createMcpServer}, which projects the registry internally.
+   */
   mcpTools,
   type ToolContext,
   type ToolProgress,
 } from "./server";
-export { capabilityId, toolFor, toolName } from "./tool";
+export { capabilityId, toolName } from "./tool";

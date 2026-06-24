@@ -18,6 +18,7 @@
     "paths": {
       "@facet/core": ["./packages/core/src/index.ts"],
       "@facet/http": ["./packages/http/src/index.ts"],
+      "@facet/http/elysia": ["./packages/http/src/app.ts"],
       "@facet/cli": ["./packages/cli/src/index.ts"],
       "@facet/mcp": ["./packages/mcp/src/index.ts"],
       "@facet/agent": ["./packages/agent/src/index.ts"],

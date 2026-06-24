@@ -75,6 +75,13 @@ export interface AgentTool {
   inputSchema: JsonSchema;
   /** The capability's threat model, surfaced so a driver renders the right affordance. */
   risk: Risk;
+  /**
+   * OPTIONAL reversibility signal, surfaced alongside `risk` (additive): `true` ⇒ recoverable (archive,
+   * capture-then-refund), `false` ⇒ permanent (hard delete, merge), omitted ⇒ unspecified. A driver calibrates
+   * its confirmation copy from it — "move to trash" reads very differently from "permanently delete" — even
+   * though both are `risk: "destructive"`. Absent on the tool when the capability never declared it.
+   */
+  reversible?: boolean;
 }
 
 /** A tool call as the host's LLM driver emits it: the advertised tool name plus the model's arguments. */
@@ -118,13 +125,15 @@ export function agentToolset(registry: Registry): AgentTool[] {
 }
 
 /** Build the agent tool for one capability: the dotted id, the summary, and the merged input schema + risk. */
-export function toolFor(def: CapabilityDef): AgentTool {
+function toolFor(def: CapabilityDef): AgentTool {
   return {
     name: def.id,
     wireName: toolName(def.id),
     description: def.summary,
     inputSchema: mergeContextFields(def),
     risk: def.risk,
+    // Additive: carried through verbatim; `undefined` stays `undefined` (unspecified), the engine reads it not.
+    reversible: def.reversible,
   };
 }
 

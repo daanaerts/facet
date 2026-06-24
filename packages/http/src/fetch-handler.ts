@@ -45,7 +45,7 @@ const SSE_MEDIA_TYPE = "text/event-stream";
  * authenticator is identical whether the surface is mounted as this fetch handler or behind Elysia — both
  * present headers the same lowercased way.
  */
-export type Headers = Record<string, string | undefined>;
+export type HeaderRecord = Record<string, string | undefined>;
 
 /**
  * The host-supplied authenticator: turns request headers into the shared {@link AuthParts} ("who is calling +
@@ -55,7 +55,7 @@ export type Headers = Record<string, string | undefined>;
  * tenant/db/install/appId here: a multi-tenant host folds its tenant into `scopes` (and the idempotency key)
  * BEFORE returning, so the framework never sees a tenant.
  */
-export type Authenticate = (headers: Headers) => AuthParts | null | Promise<AuthParts | null>;
+export type Authenticate = (headers: HeaderRecord) => AuthParts | null | Promise<AuthParts | null>;
 
 /** Options for {@link createFetchHandler}: the host's authenticator. (The registry is the first argument.) */
 export interface CreateFetchHandlerOpts {
@@ -95,8 +95,8 @@ function json(body: unknown, status = 200): Response {
 }
 
 /** Lower-case header record from a Web `Request`, so `authenticate` reads the same keys on every runtime. */
-function headerRecord(req: Request): Headers {
-  const out: Headers = {};
+function headerRecord(req: Request): HeaderRecord {
+  const out: HeaderRecord = {};
   req.headers.forEach((value, key) => {
     out[key] = value;
   });

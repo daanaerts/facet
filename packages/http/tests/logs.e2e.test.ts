@@ -180,7 +180,7 @@ describe("the logs registry over HTTP — one generic POST /cap/:id", () => {
     // The dev authenticator grants logs:read + jobs:*; assert the surface forwards a ScopeError unchanged
     // by driving a registry whose authenticator grants nothing. Built inline so the example stays a happy
     // path while the surface's error mapping is still proven.
-    const { createHttpApp } = await import("@facet/http");
+    const { createHttpApp } = await import("@facet/http/elysia");
     const { logsRegistry } = await import("../../../examples/logs/http");
     const app = createHttpApp(logsRegistry(), {
       authenticate: () => ({ actor: { kind: "service" }, scopes: [] }),
@@ -197,7 +197,7 @@ describe("the logs registry over HTTP — one generic POST /cap/:id", () => {
   });
 
   test("an unauthenticated request (authenticate → null) → 401 unauthorized", async () => {
-    const { createHttpApp } = await import("@facet/http");
+    const { createHttpApp } = await import("@facet/http/elysia");
     const { logsRegistry } = await import("../../../examples/logs/http");
     const app = createHttpApp(logsRegistry(), { authenticate: () => null });
     const res = await app.handle(

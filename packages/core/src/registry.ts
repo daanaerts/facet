@@ -1,4 +1,5 @@
 import type { CapabilityDef } from "./capability";
+import { FacetError } from "./errors";
 import type { SurfaceKind } from "./surface";
 
 /** The single map every surface reads: `capabilityId → definition`. */
@@ -7,7 +8,7 @@ export class Registry {
 
   register(def: CapabilityDef): void {
     if (this.#map.has(def.id)) {
-      throw new Error(`duplicate capability id: ${def.id}`);
+      throw new FacetError("conflict", `duplicate capability id: ${def.id}`, 409, { id: def.id });
     }
     this.#map.set(def.id, def);
   }

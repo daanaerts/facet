@@ -1,15 +1,55 @@
 {
   "name": "@facet/http",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
+  "description": "The Facet HTTP surface: a portable (req: Request) => Response fetch handler over any capability registry. Optional Elysia wrapper at @facet/http/elysia.",
+  "license": "MIT",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "bun": "./src/index.ts",
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./elysia": {
+      "bun": "./src/app.ts",
+      "import": {
+        "types": "./dist/elysia.d.ts",
+        "default": "./dist/elysia.js"
+      }
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:watch": "tsdown --watch"
   },
   "dependencies": {
     "@facet/core": "workspace:*",
-    "@elysiajs/eden": "^1.4.9",
-    "elysia": "^1.4.29",
-    "zod": "^4.0.0"
+    "@facet/surface-kit": "workspace:*"
+  },
+  "peerDependencies": {
+    "elysia": ">=1.4"
+  },
+  "peerDependenciesMeta": {
+    "elysia": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "elysia": "^1.4.29"
   }
 }

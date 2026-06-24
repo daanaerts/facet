@@ -52,7 +52,7 @@ tenants, roles, circles, or installs anywhere).
 ## Run it
 
 ```bash
-bun test           # every package + examples + the extraction & parity proofs (127 tests)
+bun test           # every package + examples + the extraction & parity proofs (the full suite)
 bun run typecheck
 bun run lint
 ```
@@ -162,6 +162,12 @@ examples/logs/          an unrelated domain: logs + jobs (+ the four surface ent
   capabilities/*.cap.ts logs.tail / logs.follow (reads), jobs.list (read), jobs.start (write), jobs.cancel
                         (destructive), logs.boom (the mid-stream-failure fixture for streaming parity)
 examples/todo/          the playable to-do app on all four surfaces (its own README + serve/cli/mcp entrypoints)
+examples/saas/          MULTI-TENANT: projects keyed by a workspace claim — ctx.claims / requireClaim, a
+                        per-tenant scopedLedger, tenant isolation; auth port = in-memory token map + real HS256 JWT
+examples/billing/       MONEY: charge/refund/export — the reversible flag, the destructive-refund wedge, and
+                        idempotency-as-safety (no double refund); gateway port = in-memory + real Stripe
+examples/outbox/        EXTERNAL CONNECTORS: email.send / issues.open via the ctx.connector port, with loud
+                        connector_unavailable; connector port = in-memory + real Resend / GitHub
 docs/STREAMING-CONTRACT.md   the normative mid-stream-error + cross-surface streaming contract
 tests/headless.test.ts       the extraction proof
 tests/streaming.test.ts      the streaming proof (one definition → every surface)

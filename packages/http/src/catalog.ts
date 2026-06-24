@@ -22,6 +22,12 @@ export interface CapabilityCatalogEntry {
   id: string;
   summary: string;
   risk: Risk;
+  /**
+   * OPTIONAL reversibility signal alongside `risk`: `true` ⇒ recoverable, `false` ⇒ permanent, omitted ⇒
+   * unspecified. A client calibrates confirmation copy from it ("move to trash" vs "permanently delete"); the
+   * field is absent from the entry when the capability did not declare it.
+   */
+  reversible?: boolean;
   /** Whether this capability streams (its result is incremental chunks + a final). Drives SSE affordances. */
   stream: boolean;
   surfaces: SurfaceKind[];
@@ -35,6 +41,9 @@ export function catalogEntry(def: CapabilityDef): CapabilityCatalogEntry {
     id: def.id,
     summary: def.summary,
     risk: def.risk,
+    // Mirror the capability's reversibility verbatim — `undefined` stays absent (JSON omits it) so the entry
+    // shape is unchanged for capabilities that never declared it.
+    reversible: def.reversible,
     stream: def.stream === true,
     surfaces: def.surfaces,
     input: toJsonSchema(def.input, "input"),

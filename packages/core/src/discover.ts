@@ -1,6 +1,7 @@
 import { readdir } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import type { CapabilityDef } from "./capability";
+import { FacetError } from "./errors";
 import { Registry } from "./registry";
 
 /**
@@ -38,8 +39,11 @@ export async function discoverCapabilities(
       const mod = (await import(pathToFileURL(file).href)) as { default?: CapabilityDef };
       const def = mod.default;
       if (!def || typeof def.id !== "string") {
-        throw new Error(
+        throw new FacetError(
+          "validation",
           `capability file is missing a default-exported defineCapability(): ${file}`,
+          400,
+          { file },
         );
       }
       registry.register(def);

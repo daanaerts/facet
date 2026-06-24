@@ -11,6 +11,30 @@ import type { Registry } from "./registry";
 import { validateStandard } from "./standard-schema";
 
 /**
+ * Dedupe set for the idempotency-without-a-ledger warning (S3). A given capability id is warned about at most
+ * once per process, so a hot loop of the same misconfigured call does not spam STDERR. Module-level, reset
+ * never — the warning is a one-time wake-up that the host forgot to wire a ledger, not a per-call diagnostic.
+ */
+const warnedInertIdempotency = new Set<string>();
+
+/**
+ * Warn — exactly ONCE per capability id, to STDERR — that an idempotent, key-carrying call is running WITHOUT
+ * a ledger, so its dedup is silently inert. This caught real latent bugs in the dogfood study: smokes "passed"
+ * only because dedup never ran. It changes NO control flow (the call proceeds exactly as before); it only makes
+ * the silent degradation audible. Muted wholesale by `FACET_SILENCE_WARNINGS` for hosts that have seen it.
+ */
+function warnInertIdempotency(id: string): void {
+  if (typeof process !== "undefined" && process.env && process.env.FACET_SILENCE_WARNINGS) return;
+  if (warnedInertIdempotency.has(id)) return;
+  warnedInertIdempotency.add(id);
+  console.warn(
+    `[facet] capability "${id}" is idempotent and was called with an idempotencyKey, but ctx.ledger is ` +
+      `undefined — idempotency is INERT (no dedup will happen). Wire a Ledger into the Context, or drop the ` +
+      `idempotencyKey. Silence with FACET_SILENCE_WARNINGS=1.`,
+  );
+}
+
+/**
  * The single chokepoint every surface flows through. GUI, CLI, MCP and the agent all call this exact
  * function, so the invariants live in one place and cannot be skipped:
  *
@@ -65,6 +89,18 @@ export async function execute<O = unknown>(
   //    the same key could both miss the lookup and both run the handler. Now the loser never runs the handler.
   const dedupe =
     ctx.ledger !== undefined && ctx.idempotencyKey !== undefined && def.risk !== "read";
+  // S3: a non-read that is idempotent AND carries a key but has NO ledger degrades SILENTLY to non-idempotent.
+  // The control flow below is unchanged (no ledger ⇒ `dedupe` is false ⇒ the handler just runs); we only make
+  // the silent no-op audible, once per id, so a host notices the missing ledger instead of shipping a smoke
+  // that "passed" because dedup never ran. Reads never dedupe, so they are never warned.
+  if (
+    def.risk !== "read" &&
+    def.idempotent &&
+    ctx.idempotencyKey !== undefined &&
+    ctx.ledger === undefined
+  ) {
+    warnInertIdempotency(id);
+  }
   if (dedupe && ctx.ledger && ctx.idempotencyKey) {
     const claim = await ctx.ledger.claim(ctx.idempotencyKey, id);
     if (claim === "lost") {

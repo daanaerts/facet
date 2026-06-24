@@ -1,5 +1,6 @@
 import { type Actor, Registry } from "@facet/core";
-import { createFetchHandler, createHttpApp, type Headers } from "@facet/http";
+import { createFetchHandler, type HeaderRecord } from "@facet/http";
+import { createHttpApp } from "@facet/http/elysia";
 import type { AuthParts } from "@facet/surface-kit";
 import jobsCancel from "./capabilities/jobs.cancel.cap";
 import jobsList from "./capabilities/jobs.list.cap";
@@ -44,9 +45,9 @@ const DEV_SCOPES = ["logs:read", "jobs:read", "jobs:write"];
  *
  * The ledger is created ONCE here (closed over), not per request, so replays actually hit a shared store.
  */
-export function devAuthenticate(): (headers: Headers) => AuthParts {
+export function devAuthenticate(): (headers: HeaderRecord) => AuthParts {
   const ledger = new MemoryLedger();
-  return (_headers: Headers): AuthParts => ({
+  return (_headers: HeaderRecord): AuthParts => ({
     actor: DEV_ACTOR,
     scopes: DEV_SCOPES,
     ledger,

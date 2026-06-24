@@ -10,6 +10,16 @@ import { store } from "../store";
 export default defineCapability({
   id: "jobs.start",
   summary: "Start a background job.",
+  description:
+    "Starts a named background job and returns its id and initial status. A write: the chokepoint gates it\n" +
+    "behind confirmation (`--yes` on the CLI, `confirm: true` on the agent/MCP surfaces). Idempotent — a\n" +
+    "retry carrying the same `--key` replays the first job instead of starting a second.",
+  examples: [
+    {
+      input: { name: "nightly" },
+      note: "Start the nightly job (the CLI needs --yes to actually run it).",
+    },
+  ],
   input: z.object({
     name: z.string().min(1).describe("A human name for the job."),
   }),
