@@ -15,7 +15,7 @@
     "build": "bun run --filter '*' build",
     "build:watch": "bun run --filter '*' build:watch",
     "publint": "bunx publint packages/core && bunx publint packages/http && bunx publint packages/cli && bunx publint packages/mcp && bunx publint packages/agent && bunx publint packages/surface-kit",
-    "attw": "bunx attw --pack packages/core && bunx attw --pack packages/http && bunx attw --pack packages/cli && bunx attw --pack packages/mcp && bunx attw --pack packages/agent && bunx attw --pack packages/surface-kit",
+    "attw": "bunx attw --pack --profile esm-only packages/core && bunx attw --pack --profile esm-only packages/http && bunx attw --pack --profile esm-only packages/cli && bunx attw --pack --profile esm-only packages/mcp && bunx attw --pack --profile esm-only packages/agent && bunx attw --pack --profile esm-only packages/surface-kit",
     "changeset": "changeset",
     "version:packages": "changeset version",
     "release": "bun run build && changeset publish"
