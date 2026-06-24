@@ -1,0 +1,17 @@
+{
+  "name": "@facet/postgres",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Postgres adapter for Facet: a PgLedger (idempotency dedup) + a claims→RLS bridge. Drizzle-native, opt-in, never imported by @facet/core.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "dependencies": {
+    "@facet/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "drizzle-orm": ">=0.36.0"
+  }
+}

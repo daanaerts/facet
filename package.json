@@ -9,6 +9,9 @@
   "scripts": {
     "check": "bun run scripts/check.ts",
     "test": "bun test",
+    "pg:up": "docker compose up -d --wait",
+    "pg:down": "docker compose down -v",
+    "test:pg": "FACET_TEST_DATABASE_URL=postgres://facet:facet@localhost:5433/facet bun test",
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",

@@ -23,7 +23,9 @@
       "@facet/mcp": ["./packages/mcp/src/index.ts"],
       "@facet/agent": ["./packages/agent/src/index.ts"],
       "@facet/surface-kit": ["./packages/surface-kit/src/index.ts"],
-      "@facet/parity": ["./packages/parity/src/index.ts"]
+      "@facet/parity": ["./packages/parity/src/index.ts"],
+      "@facet/postgres": ["./packages/postgres/src/index.ts"],
+      "@facet/postgres/schema": ["./packages/postgres/src/schema.ts"]
     }
   },
   "include": ["packages/*/src", "examples", "tests"]

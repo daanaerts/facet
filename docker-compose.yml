@@ -1,0 +1,26 @@
+# Throwaway Postgres for Facet's LIVE integration tests (`@facet/postgres`) and the `notes-pg` example.
+# These are the only tests that need a real database; everything else runs with no services.
+#
+#   docker compose up -d                         # start PG on localhost:5433
+#   bun run test:pg                              # run the suite WITH the live PG tests active
+#   docker compose down -v                       # stop it and wipe the volume
+#
+# Port 5433 (not the default 5432) avoids clashing with any Postgres you already run locally.
+# The tests are gated on FACET_TEST_DATABASE_URL and SKIP when it is unset, so a bare `bun test`
+# never touches a database — and they will never hit an ambient DATABASE_URL by accident.
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: facet
+      POSTGRES_PASSWORD: facet
+      POSTGRES_DB: facet
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U facet -d facet"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql # ephemeral: a fast, disk-free throwaway cluster (PG 18+ stores data here)
